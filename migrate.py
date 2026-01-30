@@ -1,6 +1,6 @@
 """
-Database migration script for EditorWatch - FIX student_id issue
-Run this to remove student_id column and use student_info instead
+Database migration script for EditorWatch v2
+Run this ONCE to migrate from old schema to new schema
 """
 import os
 import sys
@@ -14,7 +14,6 @@ DATABASE_URL = os.environ.get('DATABASE_URL')
 
 if not DATABASE_URL:
     print("ERROR: DATABASE_URL not set")
-    print("Set it with: export DATABASE_URL='your-database-url'")
     sys.exit(1)
 
 # Fix postgres:// to postgresql://
@@ -23,120 +22,95 @@ if DATABASE_URL.startswith('postgres://'):
 
 engine = create_engine(DATABASE_URL)
 
-print("Starting migration to remove student_id...")
-print(f"Database: {DATABASE_URL[:50]}...")
+print("Starting migration to v2 schema...")
 
 with engine.connect() as conn:
     try:
-        # Check if student_id column exists
-        result = conn.execute(text("""
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_name='submissions' AND column_name='student_id'
+        # 1. Create new student_codes table
+        print("Creating student_codes table...")
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS student_codes (
+                id SERIAL PRIMARY KEY,
+                assignment_id VARCHAR(50) NOT NULL,
+                email VARCHAR(200) NOT NULL,
+                code VARCHAR(20) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (assignment_id) REFERENCES assignments(assignment_id),
+                UNIQUE (assignment_id, email)
+            )
         """))
+        conn.commit()
+        print("✅ student_codes table created")
         
-        has_student_id = result.fetchone() is not None
-        
-        if has_student_id:
-            print("\n1. Found student_id column - migrating data...")
-            
-            # Check if student_info exists
-            result = conn.execute(text("""
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name='submissions' AND column_name='student_info'
-            """))
-            
-            has_student_info = result.fetchone() is not None
-            
-            if not has_student_info:
-                print("2. Adding student_info column...")
-                conn.execute(text("""
-                    ALTER TABLE submissions 
-                    ADD COLUMN student_info TEXT
-                """))
-                conn.commit()
-                print("   ✅ Added student_info column")
-            
-            # Migrate existing data from student_id to student_info
-            print("3. Migrating data from student_id to student_info...")
-            conn.execute(text("""
-                UPDATE submissions 
-                SET student_info = json_build_object('matricule', student_id::text)::text
-                WHERE student_info IS NULL OR student_info = ''
-            """))
+        # 2. Drop old columns from assignments table
+        print("Cleaning up assignments table...")
+        try:
+            conn.execute(text("ALTER TABLE assignments DROP COLUMN IF EXISTS required_fields"))
             conn.commit()
-            print("   ✅ Data migrated")
-            
-            # Drop the student_id column
-            print("4. Dropping student_id column...")
+            print("✅ Removed required_fields from assignments")
+        except Exception as e:
+            print(f"⚠️  Could not drop required_fields: {e}")
+        
+        # 3. Update submissions table
+        print("Updating submissions table...")
+        
+        # Add email column if it doesn't exist
+        try:
+            conn.execute(text("ALTER TABLE submissions ADD COLUMN email VARCHAR(200)"))
+            conn.commit()
+            print("✅ Added email column to submissions")
+        except Exception as e:
+            print(f"⚠️  email column may already exist: {e}")
+        
+        # Drop code_encrypted column
+        try:
+            conn.execute(text("ALTER TABLE submissions DROP COLUMN IF EXISTS code_encrypted"))
+            conn.commit()
+            print("✅ Removed code_encrypted from submissions")
+        except Exception as e:
+            print(f"⚠️  Could not drop code_encrypted: {e}")
+        
+        # Drop student_info column
+        try:
+            conn.execute(text("ALTER TABLE submissions DROP COLUMN IF EXISTS student_info"))
+            conn.commit()
+            print("✅ Removed student_info from submissions")
+        except Exception as e:
+            print(f"⚠️  Could not drop student_info: {e}")
+        
+        # 4. Update analysis_results table
+        print("Updating analysis_results table...")
+        try:
+            conn.execute(text("ALTER TABLE analysis_results ADD COLUMN flags TEXT"))
+            conn.commit()
+            print("✅ Added flags column to analysis_results")
+        except Exception as e:
+            print(f"⚠️  flags column may already exist: {e}")
+        
+        # 5. Add unique constraint to submissions (assignment_id, email)
+        print("Adding unique constraint to submissions...")
+        try:
             conn.execute(text("""
                 ALTER TABLE submissions 
-                DROP COLUMN student_id
+                ADD CONSTRAINT _assignment_student_uc 
+                UNIQUE (assignment_id, email)
             """))
             conn.commit()
-            print("   ✅ Dropped student_id column")
-            
-        else:
-            print("⚠️  student_id column doesn't exist - already migrated?")
-            
-            # Make sure student_info exists and is NOT NULL
-            result = conn.execute(text("""
-                SELECT column_name, is_nullable
-                FROM information_schema.columns 
-                WHERE table_name='submissions' AND column_name='student_info'
-            """))
-            
-            col_info = result.fetchone()
-            if col_info:
-                print(f"   student_info exists, nullable: {col_info[1]}")
-                if col_info[1] == 'YES':
-                    print("   Making student_info NOT NULL...")
-                    conn.execute(text("""
-                        UPDATE submissions 
-                        SET student_info = '{}'::text
-                        WHERE student_info IS NULL
-                    """))
-                    conn.execute(text("""
-                        ALTER TABLE submissions 
-                        ALTER COLUMN student_info SET NOT NULL
-                    """))
-                    conn.commit()
-                    print("   ✅ student_info is now NOT NULL")
-            else:
-                print("   ERROR: student_info column doesn't exist!")
-                sys.exit(1)
+            print("✅ Added unique constraint")
+        except Exception as e:
+            print(f"⚠️  Constraint may already exist: {e}")
         
-        # Check required_fields column in assignments
-        print("\n5. Checking assignments table...")
-        result = conn.execute(text("""
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_name='assignments' AND column_name='required_fields'
-        """))
-        
-        if result.fetchone() is None:
-            print("   Adding required_fields column to assignments...")
-            conn.execute(text("""
-                ALTER TABLE assignments 
-                ADD COLUMN required_fields TEXT DEFAULT '["matricule"]'
-            """))
-            conn.commit()
-            print("   ✅ Added required_fields column")
-        else:
-            print("   ✅ required_fields already exists")
-        
-        print("\n" + "="*50)
-        print("✅ Migration completed successfully!")
-        print("="*50)
-        print("\nYour database schema now matches the code:")
-        print("  - submissions.student_info (JSON text)")
-        print("  - NO student_id column")
-        print("  - assignments.required_fields")
+        print("\n✅ Migration completed successfully!")
+        print("\n⚠️  IMPORTANT: Old submissions with student_info will need manual migration")
+        print("   Run this SQL to migrate existing submissions:")
+        print("""
+        -- Example: Extract email from JSON student_info
+        UPDATE submissions 
+        SET email = student_info::json->>'email'
+        WHERE email IS NULL AND student_info IS NOT NULL;
+        """)
         
     except Exception as e:
         print(f"\n❌ Migration failed: {e}")
-        import traceback
-        traceback.print_exc()
         conn.rollback()
         sys.exit(1)

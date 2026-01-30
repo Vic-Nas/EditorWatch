@@ -110,11 +110,90 @@ def paste_burst_detection(events):
     return bursts
 
 
+def generate_flags(metrics, events):
+    """
+    Generate human-readable flags based on metrics and events.
+    
+    Returns: list of flag objects with severity and message
+    """
+    flags = []
+    
+    # Calculate additional context
+    insert_events = [e for e in events if e['type'] == 'insert']
+    total_chars = sum(e['char_count'] for e in insert_events)
+    large_paste_chars = sum(e['char_count'] for e in insert_events if e['char_count'] > 100)
+    
+    # FLAG: Low incremental score
+    if metrics['incremental_score'] < 0.3:
+        if total_chars > 0 and large_paste_chars / total_chars > 0.7:
+            flags.append({
+                'severity': 'high',
+                'message': f'Majority of code ({large_paste_chars}/{total_chars} characters) appeared in large blocks rather than gradual development'
+            })
+        else:
+            flags.append({
+                'severity': 'medium',
+                'message': 'Code development pattern shows sudden large insertions rather than incremental work'
+            })
+    
+    # FLAG: Low typing variance
+    if metrics['typing_variance'] < 0.15:
+        flags.append({
+            'severity': 'medium',
+            'message': 'Typing patterns are unusually consistent, suggesting copy/paste rather than manual authoring'
+        })
+    
+    # FLAG: No error correction
+    if metrics['error_correction_ratio'] < 0.05:
+        flags.append({
+            'severity': 'medium',
+            'message': 'Almost no deletions or corrections detected - unusual for genuine coding activity'
+        })
+    
+    # FLAG: Multiple paste bursts
+    if metrics['paste_burst_count'] > 5:
+        flags.append({
+            'severity': 'high',
+            'message': f'{metrics["paste_burst_count"]} paste burst events detected - code likely copied from external source'
+        })
+    elif metrics['paste_burst_count'] > 2:
+        flags.append({
+            'severity': 'low',
+            'message': f'{metrics["paste_burst_count"]} paste burst events detected'
+        })
+    
+    # FLAG: Very short working time
+    if events:
+        time_span = (events[-1]['timestamp'] - events[0]['timestamp']) / 1000 / 60  # minutes
+        if time_span < 5 and total_chars > 200:
+            flags.append({
+                'severity': 'high',
+                'message': f'Entire submission completed in {time_span:.1f} minutes - suspiciously fast'
+            })
+    
+    # FLAG: All good
+    if not flags:
+        flags.append({
+            'severity': 'none',
+            'message': 'No suspicious patterns detected - metrics indicate genuine development'
+        })
+    
+    return flags
+
+
 def calculate_all_metrics(events):
     """Calculate all metrics at once"""
-    return {
+    metrics = {
         'incremental_score': incremental_score(events),
         'typing_variance': typing_variance(events),
         'error_correction_ratio': error_correction_ratio(events),
         'paste_burst_count': paste_burst_detection(events)
+    }
+    
+    # Generate flags based on metrics
+    flags = generate_flags(metrics, events)
+    
+    return {
+        **metrics,
+        'flags': flags
     }

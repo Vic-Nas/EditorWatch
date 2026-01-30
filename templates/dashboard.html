@@ -59,6 +59,10 @@
         .btn:hover {
             background: #5568d3;
         }
+        .btn-small {
+            padding: 5px 10px;
+            font-size: 12px;
+        }
         .btn-secondary {
             background: #48bb78;
         }
@@ -96,36 +100,28 @@
             background: white;
             padding: 30px;
             border-radius: 10px;
-            max-width: 500px;
+            max-width: 600px;
             width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
         }
-        .modal input, .modal select {
+        .modal input, .modal select, .modal textarea {
             width: 100%;
             padding: 10px;
             margin: 10px 0;
             border: 1px solid #ddd;
             border-radius: 5px;
+            font-family: inherit;
+        }
+        .modal textarea {
+            min-height: 150px;
+            font-size: 13px;
         }
         .close {
             float: right;
             cursor: pointer;
             font-size: 24px;
             color: #999;
-        }
-        .field-builder {
-            margin: 15px 0;
-        }
-        .field-item {
-            display: flex;
-            gap: 10px;
-            margin: 5px 0;
-        }
-        .field-item input {
-            flex: 1;
-        }
-        .btn-small {
-            padding: 5px 10px;
-            font-size: 12px;
         }
         .success-box {
             background: #d4edda;
@@ -135,18 +131,22 @@
             border-radius: 5px;
             margin: 15px 0;
         }
-        .download-link {
-            display: inline-block;
-            margin-top: 10px;
-            padding: 10px 15px;
-            background: #48bb78;
-            color: white;
-            text-decoration: none;
+        .warning-box {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+            padding: 15px;
             border-radius: 5px;
-            font-weight: 600;
+            margin: 15px 0;
         }
-        .download-link:hover {
-            background: #38a169;
+        .status-clean { color: #2ecc71; font-weight: bold; }
+        .status-warning { color: #f39c12; font-weight: bold; }
+        .status-suspicious { color: #e74c3c; font-weight: bold; }
+        .status-pending { color: #95a5a6; font-weight: bold; }
+        .help-text {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
         }
     </style>
 </head>
@@ -181,24 +181,17 @@
                 <input type="text" id="course" placeholder="Course (e.g., CS 101)" required>
                 <input type="datetime-local" id="deadline" required>
                 
-                <div class="field-builder">
-                    <label><strong>Required Student Info:</strong></label>
-                    <div id="fields-container">
-                        <div class="field-item">
-                            <input type="checkbox" checked disabled> <span>Matricule (always required)</span>
-                        </div>
-                        <div class="field-item">
-                            <input type="checkbox" id="field_name"> <label for="field_name">Name</label>
-                        </div>
-                        <div class="field-item">
-                            <input type="checkbox" id="field_email"> <label for="field_email">Email</label>
-                        </div>
-                    </div>
-                </div>
+                <label><strong>File Patterns to Track:</strong></label>
+                <input type="text" id="track_patterns" placeholder="*.py, *.js, *.html" value="*.py">
+                <div class="help-text">Comma-separated list. Example: *.py, *.js, *.cpp</div>
                 
-                <input type="text" id="track_patterns" placeholder="File patterns (*.py, *.js)" value="*.py">
+                <label><strong>Student Emails (one per line):</strong></label>
+                <textarea id="students" placeholder="alice@university.edu
+bob@university.edu
+carol@university.edu" required></textarea>
+                <div class="help-text">Each student will receive a unique access code via email</div>
                 
-                <button type="submit" class="btn" style="margin-top: 10px;">Create</button>
+                <button type="submit" class="btn" style="margin-top: 10px;">Create & Send Codes</button>
             </form>
             
             <div id="success-message" style="display: none;"></div>
@@ -218,7 +211,6 @@
                         <th>Course</th>
                         <th>Assignment</th>
                         <th>Deadline</th>
-                        <th>Required Fields</th>
                         <th>Actions</th>
                     </tr>
                     ${assignments.map(a => `
@@ -226,12 +218,10 @@
                             <td>${a.course}</td>
                             <td>${a.name}</td>
                             <td>${new Date(a.deadline).toLocaleString()}</td>
-                            <td>${a.required_fields.join(', ')}</td>
                             <td>
-                                <a href="/api/assignments/${a.assignment_id}/config" class="btn btn-small btn-secondary" download>⬇ Download Config</a>
+                                <a href="/api/assignments/${a.assignment_id}/config" class="btn btn-small btn-secondary" download>⬇ Config File</a>
                                 <button class="btn btn-small" onclick="viewSubmissions('${a.assignment_id}')">View Submissions</button>
-                                <button class="btn btn-small" onclick="editAssignment('${a.assignment_id}')" style="background: #f39c12;">✏️ Edit</button>
-                                <button class="btn btn-small" onclick="deleteAssignment('${a.assignment_id}')" style="background: #e74c3c;">🗑️ Delete</button>
+                                <button class="btn btn-small" onclick="deleteAssignment('${a.assignment_id}')" style="background: #e74c3c;">Delete</button>
                             </td>
                         </tr>
                     `).join('')}
@@ -249,39 +239,47 @@
             const submissionsSection = document.getElementById('submissions-section');
             submissionsSection.style.display = 'block';
             
+            const statusDisplay = (status) => {
+                const labels = {
+                    'clean': '🟢 Clean',
+                    'warning': '🟡 Review',
+                    'suspicious': '🔴 Suspicious',
+                    'pending': '⏳ Pending'
+                };
+                return `<span class="status-${status}">${labels[status] || status}</span>`;
+            };
+            
             const html = submissions.length ? `
                 <h3>Assignment: ${assignmentId}</h3>
                 <p>${submissions.length} submission(s)</p>
                 <table>
                     <tr>
-                        <th>Student Info</th>
+                        <th>Student Email</th>
                         <th>Submitted</th>
+                        <th>Status</th>
                         <th>Incremental</th>
                         <th>Variance</th>
-                        <th>Corrections</th>
                         <th>Paste Bursts</th>
                         <th>Actions</th>
                     </tr>
-                    ${submissions.map(s => {
-                        const infoDisplay = Object.entries(s.student_info).map(([k,v]) => `${k}: ${v}`).join(', ');
-                        return `
+                    ${submissions.map(s => `
                         <tr>
-                            <td>${infoDisplay}</td>
+                            <td>${s.email}</td>
                             <td>${new Date(s.submitted_at).toLocaleString()}</td>
-                            <td>${s.analysis?.incremental_score?.toFixed(2) || 'Pending'}</td>
-                            <td>${s.analysis?.typing_variance?.toFixed(2) || 'Pending'}</td>
-                            <td>${s.analysis?.error_correction_ratio?.toFixed(2) || 'Pending'}</td>
-                            <td>${s.analysis?.paste_burst_count ?? 'Pending'}</td>
+                            <td>${statusDisplay(s.status)}</td>
+                            <td>${s.analysis?.incremental_score?.toFixed(2) || '-'}</td>
+                            <td>${s.analysis?.typing_variance?.toFixed(2) || '-'}</td>
+                            <td>${s.analysis?.paste_burst_count ?? '-'}</td>
                             <td>
                                 <a href="/submission/${s.id}" class="btn btn-small">View Detail</a>
                             </td>
                         </tr>
-                    `}).join('')}
+                    `).join('')}
                 </table>
             ` : '<p>No submissions yet.</p>';
             
             document.getElementById('submissions-list').innerHTML = html;
-            document.getElementById('submissions-section').scrollIntoView({ behavior: 'smooth' });
+            submissionsSection.scrollIntoView({ behavior: 'smooth' });
         }
         
         function showCreateModal() {
@@ -297,16 +295,27 @@
         async function createAssignment(event) {
             event.preventDefault();
             
-            const requiredFields = ['matricule'];
-            if (document.getElementById('field_name').checked) requiredFields.push('name');
-            if (document.getElementById('field_email').checked) requiredFields.push('email');
+            // Parse students (one per line)
+            const studentsText = document.getElementById('students').value;
+            const students = studentsText.split('\n')
+                .map(s => s.trim())
+                .filter(s => s.length > 0);
+            
+            if (students.length === 0) {
+                alert('Please enter at least one student email');
+                return;
+            }
+            
+            // Parse track patterns
+            const patternsText = document.getElementById('track_patterns').value;
+            const patterns = patternsText.split(',').map(s => s.trim()).filter(s => s.length > 0);
             
             const data = {
                 name: document.getElementById('name').value,
                 course: document.getElementById('course').value,
                 deadline: document.getElementById('deadline').value,
-                required_fields: requiredFields,
-                track_patterns: document.getElementById('track_patterns').value.split(',').map(s => s.trim())
+                track_patterns: patterns,
+                students: students
             };
             
             const response = await fetch('/api/assignments', {
@@ -318,15 +327,32 @@
             if (response.ok) {
                 const result = await response.json();
                 const successMsg = document.getElementById('success-message');
-                successMsg.innerHTML = `
-                    <div class="success-box">
-                        <strong>✅ Assignment created!</strong><br>
-                        <p>Share this config file with your students:</p>
-                        <a href="${result.download_url}" class="download-link" download>
-                            📥 Download ${result.assignment_id}.editorwatch
-                        </a>
-                    </div>
-                `;
+                
+                let message = `<div class="success-box">
+                    <strong>✅ Assignment created!</strong><br>
+                    <p>Codes sent to ${result.codes_sent} student(s)</p>`;
+                
+                if (!result.smtp_enabled) {
+                    message += `<div class="warning-box" style="margin-top: 10px;">
+                        <strong>⚠️ SMTP not configured</strong><br>
+                        Codes were generated but not emailed. Configure SMTP environment variables to enable automatic emails.
+                    </div>`;
+                }
+                
+                if (result.codes_failed && result.codes_failed.length > 0) {
+                    message += `<div class="warning-box" style="margin-top: 10px;">
+                        <strong>Failed to email ${result.codes_failed.length} student(s):</strong><br>
+                        ${result.codes_failed.map(f => `${f.email}: <code>${f.code}</code>`).join('<br>')}
+                    </div>`;
+                }
+                
+                message += `<p style="margin-top: 10px;">Share this config file with students:</p>
+                    <a href="${result.config_url}" class="btn btn-secondary" download style="margin-top: 10px;">
+                        📥 Download ${result.assignment_id}.editorwatch
+                    </a>
+                </div>`;
+                
+                successMsg.innerHTML = message;
                 successMsg.style.display = 'block';
                 
                 loadAssignments();
@@ -336,80 +362,10 @@
             }
         }
         
-        // Load data on page load
-        loadAssignments();
-        
-        async function editAssignment(assignmentId) {
-            // Get assignment details
-            const response = await fetch(`/api/assignments/${assignmentId}`);
-            const assignment = await response.json();
-            
-            // Pre-fill form
-            document.getElementById('name').value = assignment.name;
-            document.getElementById('course').value = assignment.course;
-            
-            // Convert ISO to datetime-local format
-            const deadline = new Date(assignment.deadline);
-            const localDate = new Date(deadline.getTime() - deadline.getTimezoneOffset() * 60000);
-            document.getElementById('deadline').value = localDate.toISOString().slice(0, 16);
-            
-            document.getElementById('track_patterns').value = assignment.track_patterns.join(', ');
-            
-            // Set required fields checkboxes
-            document.getElementById('field_name').checked = assignment.required_fields.includes('name');
-            document.getElementById('field_email').checked = assignment.required_fields.includes('email');
-            
-            // Change form to edit mode
-            const form = document.getElementById('createForm');
-            form.onsubmit = async (e) => {
-                e.preventDefault();
-                await updateAssignment(assignmentId);
-            };
-            
-            // Show modal with different title
-            document.querySelector('#createModal h2').textContent = 'Edit Assignment';
-            document.querySelector('#createForm button[type="submit"]').textContent = 'Update';
-            showCreateModal();
-        }
-        
-        async function updateAssignment(assignmentId) {
-            const requiredFields = ['matricule'];
-            if (document.getElementById('field_name').checked) requiredFields.push('name');
-            if (document.getElementById('field_email').checked) requiredFields.push('email');
-            
-            const data = {
-                name: document.getElementById('name').value,
-                course: document.getElementById('course').value,
-                deadline: document.getElementById('deadline').value,
-                required_fields: requiredFields,
-                track_patterns: document.getElementById('track_patterns').value.split(',').map(s => s.trim())
-            };
-            
-            const response = await fetch(`/api/assignments/${assignmentId}`, {
-                method: 'PUT',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(data)
-            });
-            
-            if (response.ok) {
-                hideCreateModal();
-                loadAssignments();
-                alert('Assignment updated successfully!');
-                
-                // Reset form back to create mode
-                resetFormToCreateMode();
-            } else {
-                alert('Error updating assignment');
-            }
-        }
-        
         async function deleteAssignment(assignmentId) {
             const confirmed = confirm(
                 'Delete this assignment?\n\n' +
-                'This will permanently delete:\n' +
-                '- The assignment configuration\n' +
-                '- All student submissions\n' +
-                '- All analysis data\n\n' +
+                'This will permanently delete all student codes and submissions.\n\n' +
                 'This cannot be undone!'
             );
             
@@ -421,18 +377,15 @@
             
             if (response.ok) {
                 loadAssignments();
+                document.getElementById('submissions-section').style.display = 'none';
                 alert('Assignment deleted');
             } else {
                 alert('Error deleting assignment');
             }
         }
         
-        function resetFormToCreateMode() {
-            const form = document.getElementById('createForm');
-            form.onsubmit = createAssignment;
-            document.querySelector('#createModal h2').textContent = 'Create Assignment';
-            document.querySelector('#createForm button[type="submit"]').textContent = 'Create';
-        }
+        // Load assignments on page load
+        loadAssignments();
     </script>
 </body>
 </html>

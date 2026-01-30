@@ -21,22 +21,38 @@ class Assignment(db.Model):
     name = db.Column(db.String(200), nullable=False)
     track_patterns = db.Column(db.Text)  # JSON array of file patterns
     deadline = db.Column(db.DateTime, nullable=False)
-    required_fields = db.Column(db.Text, default='["matricule"]')  # NEW: JSON array of required student fields
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     submissions = db.relationship('Submission', backref='assignment', lazy=True)
+    student_codes = db.relationship('StudentCode', backref='assignment', lazy=True)
+
+
+class StudentCode(db.Model):
+    """Student access codes for assignments"""
+    __tablename__ = 'student_codes'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    assignment_id = db.Column(db.String(50), db.ForeignKey('assignments.assignment_id'), nullable=False)
+    email = db.Column(db.String(200), nullable=False)
+    code = db.Column(db.String(20), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Composite unique constraint
+    __table_args__ = (db.UniqueConstraint('assignment_id', 'email', name='_assignment_email_uc'),)
 
 
 class Submission(db.Model):
-    """Student submission"""
+    """Student submission - only events, no code"""
     __tablename__ = 'submissions'
     
     id = db.Column(db.Integer, primary_key=True)
-    student_info = db.Column(db.Text, nullable=False)  # CHANGED: JSON with flexible fields (matricule, name, etc.)
+    email = db.Column(db.String(200), nullable=False)
     assignment_id = db.Column(db.String(50), db.ForeignKey('assignments.assignment_id'), nullable=False)
     events_encrypted = db.Column(db.Text, nullable=False)
-    code_encrypted = db.Column(db.Text, nullable=False)
     submitted_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Only keep latest submission per student per assignment
+    __table_args__ = (db.UniqueConstraint('assignment_id', 'email', name='_assignment_student_uc'),)
     
     analysis_result = db.relationship('AnalysisResult', backref='submission', uselist=False)
 
@@ -51,5 +67,6 @@ class AnalysisResult(db.Model):
     typing_variance = db.Column(db.Float)
     error_correction_ratio = db.Column(db.Float)
     paste_burst_count = db.Column(db.Integer)
+    flags = db.Column(db.Text)  # JSON array of flag objects
     timeline_html = db.Column(db.Text)  # Plotly HTML visualization
     created_at = db.Column(db.DateTime, default=datetime.utcnow)

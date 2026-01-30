@@ -40,8 +40,8 @@ def analyze_submission(submission_id):
         # Decrypt events
         events = decrypt_data(submission.events_encrypted)
         
-        # Calculate metrics
-        metrics = calculate_all_metrics(events)
+        # Calculate metrics and flags
+        result = calculate_all_metrics(events)
         
         # Generate visualizations
         timeline_html = create_timeline(events)
@@ -56,21 +56,35 @@ def analyze_submission(submission_id):
         </div>
         """
         
-        # Save results
-        result = AnalysisResult(
-            submission_id=submission_id,
-            incremental_score=metrics['incremental_score'],
-            typing_variance=metrics['typing_variance'],
-            error_correction_ratio=metrics['error_correction_ratio'],
-            paste_burst_count=metrics['paste_burst_count'],
-            timeline_html=combined_html
-        )
+        # Save or update results
+        analysis = AnalysisResult.query.filter_by(submission_id=submission_id).first()
         
-        db.session.add(result)
+        if analysis:
+            # Update existing
+            analysis.incremental_score = result['incremental_score']
+            analysis.typing_variance = result['typing_variance']
+            analysis.error_correction_ratio = result['error_correction_ratio']
+            analysis.paste_burst_count = result['paste_burst_count']
+            analysis.flags = json.dumps(result['flags'])
+            analysis.timeline_html = combined_html
+        else:
+            # Create new
+            analysis = AnalysisResult(
+                submission_id=submission_id,
+                incremental_score=result['incremental_score'],
+                typing_variance=result['typing_variance'],
+                error_correction_ratio=result['error_correction_ratio'],
+                paste_burst_count=result['paste_burst_count'],
+                flags=json.dumps(result['flags']),
+                timeline_html=combined_html
+            )
+            db.session.add(analysis)
+        
         db.session.commit()
         
-        print(f"Analysis complete for submission {submission_id}")
-        print(f"Metrics: {metrics}")
+        print(f"✅ Analysis complete for submission {submission_id}")
+        print(f"Metrics: incremental={result['incremental_score']}, variance={result['typing_variance']}")
+        print(f"Flags: {len(result['flags'])} generated")
 
 
 if __name__ == '__main__':

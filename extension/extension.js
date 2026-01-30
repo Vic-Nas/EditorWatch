@@ -5,7 +5,22 @@ const https = require('https');
 const http = require('http');
 
 let db, currentAssignment, statusBarItem;
-let SQL;
+
+// Patterns to always ignore
+const IGNORE_PATTERNS = [
+    '__pycache__',
+    '.git',
+    '.history',
+    'node_modules',
+    '.vscode',
+    '.idea',
+    'venv',
+    'env',
+    '.env',
+    'dist',
+    'build',
+    '.cache'
+];
 
 // Simple in-memory database using JSON
 class SimpleDB {
@@ -154,12 +169,34 @@ function showOptInPrompt(config, context) {
         message,
         { modal: true },
         'Enable', 'Learn More', 'Not Now'
-    ).then(selection => {
+    ).then(async selection => {
         if (selection === 'Enable') {
+            // Ask for access code
+            const code = await vscode.window.showInputBox({
+                prompt: 'Enter your access code (sent via email)',
+                placeHolder: 'ABC123',
+                ignoreFocusOut: true,
+                validateInput: (text) => {
+                    if (!text || text.trim().length === 0) {
+                        return 'Access code is required';
+                    }
+                    return null;
+                }
+            });
+            
+            if (!code) {
+                vscode.window.showWarningMessage('EditorWatch: Code required to enable monitoring');
+                return;
+            }
+            
+            // Store code with assignment
+            config.student_code = code.trim().toUpperCase();
+            
             const accepted = context.globalState.get('accepted_assignments', {});
             accepted[config.assignment_id] = {
                 accepted_at: Date.now(),
-                workspace: vscode.workspace.workspaceFolders[0].uri.fsPath
+                workspace: vscode.workspace.workspaceFolders[0].uri.fsPath,
+                code: config.student_code
             };
             context.globalState.update('accepted_assignments', accepted);
             startMonitoring(config, context);
@@ -174,6 +211,15 @@ function showOptInPrompt(config, context) {
 }
 
 function startMonitoring(config, context) {
+    // Restore code if it was saved
+    if (!config.student_code) {
+        const accepted = context.globalState.get('accepted_assignments', {});
+        const savedData = accepted[config.assignment_id];
+        if (savedData && savedData.code) {
+            config.student_code = savedData.code;
+        }
+    }
+    
     currentAssignment = config;
     
     try {
@@ -196,6 +242,15 @@ function startMonitoring(config, context) {
 
 function shouldTrackFile(fileName) {
     if (!currentAssignment) return false;
+    
+    const relativePath = vscode.workspace.asRelativePath(fileName);
+    
+    // Check if in ignored directory
+    for (const ignore of IGNORE_PATTERNS) {
+        if (relativePath.includes(ignore)) {
+            return false;
+        }
+    }
     
     const patterns = currentAssignment.track_patterns || ['*.py'];
     const baseName = path.basename(fileName);
@@ -245,8 +300,16 @@ async function submitAssignment(context) {
         return;
     }
     
+    // Check deadline again before submission
+    if (new Date() > new Date(currentAssignment.deadline)) {
+        vscode.window.showErrorMessage(
+            '⏰ Deadline has passed! Your work is saved locally but cannot be submitted.'
+        );
+        return;
+    }
+    
     const answer = await vscode.window.showWarningMessage(
-        `Submit "${currentAssignment.name}"?\n\nThis will upload your code and coding timeline.`,
+        `Submit "${currentAssignment.name}"?\n\nThis will upload your coding timeline for analysis.`,
         { modal: true },
         'Submit', 'Cancel'
     );
@@ -259,33 +322,6 @@ async function submitAssignment(context) {
         cancellable: false
     }, async (progress) => {
         try {
-            progress.report({ message: 'Collecting required information...' });
-            
-            // Collect required student info
-            const requiredFields = currentAssignment.required_fields || ['matricule'];
-            const studentInfo = {};
-            
-            for (const field of requiredFields) {
-                const value = await vscode.window.showInputBox({
-                    prompt: `Enter your ${field}`,
-                    placeHolder: field === 'matricule' ? 'e.g., 12345678' : `Your ${field}`,
-                    ignoreFocusOut: true,
-                    validateInput: (text) => {
-                        if (!text || text.trim().length === 0) {
-                            return `${field} is required`;
-                        }
-                        return null;
-                    }
-                });
-                
-                if (!value) {
-                    vscode.window.showWarningMessage('Submission cancelled');
-                    return;
-                }
-                
-                studentInfo[field] = value.trim();
-            }
-            
             progress.report({ message: 'Collecting events...' });
             const events = db.prepare('SELECT * FROM events ORDER BY timestamp').all();
             
@@ -294,21 +330,12 @@ async function submitAssignment(context) {
                 return;
             }
             
-            progress.report({ message: 'Collecting code files...' });
-            const code = await getCodeFiles();
-            
-            if (Object.keys(code).length === 0) {
-                vscode.window.showWarningMessage('No code files found!');
-                return;
-            }
-            
             progress.report({ message: 'Uploading...' });
             
             const payload = JSON.stringify({
-                student_info: studentInfo,
+                code: currentAssignment.student_code,
                 assignment_id: currentAssignment.assignment_id,
-                events: events,
-                code: code
+                events: events
             });
             
             await makeRequest(currentAssignment.server + '/api/submit', payload);
@@ -337,29 +364,6 @@ async function submitAssignment(context) {
             });
         }
     });
-}
-
-async function getCodeFiles() {
-    const files = {};
-    const workspaceFolder = vscode.workspace.workspaceFolders[0].uri.fsPath;
-    const patterns = currentAssignment.track_patterns || ['*.py'];
-    
-    for (const pattern of patterns) {
-        try {
-            const filePattern = new vscode.RelativePattern(workspaceFolder, `**/${pattern}`);
-            const uris = await vscode.workspace.findFiles(filePattern, '**/node_modules/**');
-            
-            for (const uri of uris) {
-                const relativePath = path.relative(workspaceFolder, uri.fsPath);
-                const content = fs.readFileSync(uri.fsPath, 'utf8');
-                files[relativePath] = content;
-            }
-        } catch (error) {
-            console.error('EditorWatch: Error collecting files:', error);
-        }
-    }
-    
-    return files;
 }
 
 function makeRequest(url, data) {
