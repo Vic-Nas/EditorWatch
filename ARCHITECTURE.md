@@ -7,6 +7,7 @@
 │  1. VS Code Extension (Client)     │
 │     - Event Logger                  │
 │     - Local SQLite Buffer           │
+│     - One-time Opt-in               │
 │     - Manual Submit                 │
 └──────────────┬──────────────────────┘
                │ HTTPS (user trigger)
@@ -16,6 +17,7 @@
 │     - Flask API                     │
 │     - PostgreSQL (encrypted)        │
 │     - Job Queue (RQ/Redis)          │
+│     - Deadline Validation           │
 └──────────────┬──────────────────────┘
                │ instructor request
                ↓
@@ -34,6 +36,149 @@
 │     - Read-only Access              │
 └─────────────────────────────────────┘
 ```
+
+---
+
+## Assignment Distribution (.zip Workflow)
+
+### Teacher Setup (One-time per assignment)
+
+1. **Create assignment in dashboard:**
+```
+Assignment Name: Homework 3 - Binary Trees
+Track Files: *.py
+Deadline: 2024-02-15 23:59:59 UTC
+Team Mode: No
+```
+
+2. **Generate starter code:**
+```
+Dashboard generates: homework3_starter.zip containing:
+  ├── .editorwatch          (assignment config)
+  ├── main.py               (optional starter code)
+  ├── tests.py              (optional)
+  └── README.md             (instructions)
+```
+
+3. **Upload to course LMS** (Canvas, Moodle, etc.)
+
+### .editorwatch File Format
+
+```json
+{
+  "assignment_id": "cs101_hw3_a8f2b9",
+  "server": "https://editorwatch.university.edu",
+  "track_patterns": ["*.py"],
+  "deadline": "2024-02-15T23:59:59Z",
+  "course": "CS 101",
+  "name": "Homework 3 - Binary Trees"
+}
+```
+
+**Key Design Decisions:**
+- Student never edits this (their problem if they do)
+- Config is read ONCE when first detected
+- Changes to file after opt-in are ignored
+- If student deletes it, extension offers to re-link
+
+### Student Workflow
+
+```
+1. Download homework3_starter.zip from course site
+2. Extract and open folder in VS Code
+3. Extension detects .editorwatch file
+4. Small notification appears (bottom-right):
+   ┌────────────────────────────────────┐
+   │ 📊 EditorWatch                    │
+   │ Assignment: Homework 3             │
+   │ Deadline: Feb 15, 11:59 PM        │
+   │ [Enable Monitoring] [Not Now]     │
+   └────────────────────────────────────┘
+5. Student clicks "Enable Monitoring" (or ignores)
+6. Work normally - no more popups
+7. When done: Click status bar → "Submit"
+```
+
+**Total setup time: 2 seconds (one click)**
+
+### One-Time Opt-In Logic
+
+Extension stores consent in local state:
+
+```typescript
+// extension_state.json (stored in extension's global storage)
+{
+  "accepted_assignments": {
+    "cs101_hw3_a8f2b9": {
+      "accepted_at": "2024-02-01T10:30:00Z",
+      "workspace_path": "/home/student/homework3",
+      "monitoring_active": true
+    }
+  }
+}
+```
+
+**Behavior on subsequent VS Code opens:**
+```typescript
+async function onWorkspaceOpen() {
+  const editorwatchFile = findEditorwatchFile();
+  if (!editorwatchFile) return;
+  
+  const config = JSON.parse(fs.readFileSync(editorwatchFile));
+  const assignmentId = config.assignment_id;
+  
+  // Check if already accepted
+  if (extensionState.hasAccepted(assignmentId)) {
+    // Silently resume monitoring - NO popup
+    startMonitoring(config);
+    return;
+  }
+  
+  // Check if deadline passed (query server)
+  const isActive = await checkDeadlineActive(config.server, assignmentId);
+  if (!isActive) {
+    // Deadline passed - don't even show popup
+    return;
+  }
+  
+  // First time seeing this assignment - show opt-in popup
+  showOptInNotification(config);
+}
+```
+
+**Rules:**
+- ✅ Show popup ONCE per assignment (first detection)
+- ✅ Never show popup again after opt-in
+- ✅ Never show popup if deadline passed
+- ✅ Silently resume monitoring on subsequent opens
+- ✅ If student clicks "Not Now", remember that too (don't re-ask until next session)
+
+### Deadline Validation (Server-side)
+
+```python
+# routes/assignments.py
+@app.route('/api/assignments/<assignment_id>/active', methods=['GET'])
+def check_assignment_active(assignment_id):
+    assignment = Assignment.query.get(assignment_id)
+    if not assignment:
+        return jsonify({'active': False}), 404
+    
+    now = datetime.utcnow()
+    is_active = now < assignment.deadline
+    
+    return jsonify({
+        'active': is_active,
+        'deadline': assignment.deadline.isoformat(),
+        'time_remaining': (assignment.deadline - now).total_seconds() if is_active else 0
+    })
+```
+
+**Extension checks this endpoint:**
+- On first detection (before showing popup)
+- When resuming monitoring (to stop if deadline passed)
+- Before allowing submission (reject if too late)
+
+**Result:** Past-deadline assignments are invisible to extension.
 
 ---
 
@@ -612,22 +757,151 @@ cd backend
 rq worker
 ```
 
-### Production (Simple)
+### Production: Railway (Recommended)
 
-**Option 1: Single VPS (DigitalOcean/AWS)**
-- Flask app (Gunicorn)
-- PostgreSQL (managed service or local)
-- Redis (managed service or local)
-- Nginx (reverse proxy)
-- SSL via Let's Encrypt
+**Why Railway:**
+- Simple Python deployment
+- Built-in PostgreSQL
+- Built-in Redis
+- Automatic HTTPS
+- ~$5/month for small scale
 
-**Option 2: Heroku (Easiest)**
-- Deploy Flask app
-- Add Heroku Postgres
-- Add Heroku Redis
-- Worker dyno for RQ
+**Setup Steps:**
 
-**Cost:** ~$20-50/month for small deployment (100 students)
+1. **Install Railway CLI:**
+```bash
+npm install -g @railway/cli
+railway login
+```
+
+2. **Initialize project:**
+```bash
+cd backend
+railway init
+```
+
+3. **Add services:**
+```bash
+# Railway dashboard or CLI
+railway add postgresql
+railway add redis
+```
+
+4. **Configure environment variables:**
+```bash
+railway variables set FLASK_APP=app.py
+railway variables set SECRET_KEY=$(openssl rand -hex 32)
+railway variables set ENCRYPTION_KEY=$(python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+```
+
+5. **Deploy:**
+```bash
+railway up
+```
+
+**Railway auto-generates URL:** `https://editorwatch-production.up.railway.app`
+
+### Using Your Reverse Proxy
+
+**Current setup:** Railway gives you `editorwatch-production.up.railway.app`
+
+**Your reverse proxy can shorten this:**
+
+```nginx
+# Your reverse proxy config (nginx/caddy/traefik)
+server {
+    listen 443 ssl;
+    server_name ew.yourdomain.com;  # Short URL
+    
+    location / {
+        proxy_pass https://editorwatch-production.up.railway.app;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+**Or even shorter with path-based routing:**
+```
+editorwatch-production.up.railway.app  →  yourdomain.com/ew
+```
+
+**Update .editorwatch files to use your domain:**
+```json
+{
+  "server": "https://ew.yourdomain.com",
+  ...
+}
+```
+
+### Future: Custom Domain on Railway
+
+When you get a domain:
+```bash
+railway domain add editorwatch.yourdomain.com
+```
+
+Railway handles SSL automatically via Let's Encrypt.
+
+### Railway Configuration Files
+
+**railway.json** (in backend/):
+```json
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "build": {
+    "builder": "NIXPACKS"
+  },
+  "deploy": {
+    "startCommand": "gunicorn app:app",
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10
+  }
+}
+```
+
+**Procfile** (optional, for worker):
+```
+web: gunicorn app:app --workers 2
+worker: rq worker
+```
+
+**requirements.txt:**
+```
+flask==3.0.0
+flask-sqlalchemy==3.1.1
+flask-login==0.6.3
+psycopg2-binary==2.9.9
+redis==5.0.1
+rq==1.15.1
+cryptography==41.0.7
+numpy==1.26.2
+pandas==2.1.4
+plotly==5.18.0
+openai==1.6.1
+gunicorn==21.2.0
+python-dotenv==1.0.0
+```
+
+### Cost Estimates
+
+**Railway Deployment:**
+- Hobby plan: $5/month (base)
+- Postgres: Included
+- Redis: Included
+- Bandwidth: ~1GB free, then $0.10/GB
+- **Total for 100 students:** ~$5-10/month
+
+**With your reverse proxy:**
+- Railway: $5/month
+- Your VPS (already running): $0 extra
+- Domain (future): ~$12/year
+- **Total:** ~$5-6/month
+
+**Alternative Options:**
+- **Render:** Similar to Railway, slightly different pricing
+- **Fly.io:** More control, similar cost
+- **VPS (DigitalOcean):** ~$12/month, more manual setup
 
 ---
 
