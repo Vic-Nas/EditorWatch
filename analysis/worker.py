@@ -11,7 +11,7 @@ from analysis.metrics import calculate_all_metrics
 from analysis.visualizer import (create_timeline, create_activity_heatmap, 
                                  create_velocity_chart, create_activity_overview,
                                  create_file_risk_table)
-from analysis.data_export import export_to_json, generate_llm_prompt
+from analysis.data_export import export_for_llm_analysis, generate_llm_prompt
 
 # Initialize encryption (same as app.py but without importing app)
 ENCRYPTION_KEY = os.environ.get('ENCRYPTION_KEY', Fernet.generate_key())
@@ -97,13 +97,6 @@ def analyze_submission(submission_id):
         
         print(f"   ✓ Visualizations created")
         
-        # Export clean data for LLM analysis
-        export_dir = os.path.join(os.path.dirname(__file__), '..', 'llm_exports')
-        os.makedirs(export_dir, exist_ok=True)
-        
-        export_path = os.path.join(export_dir, f'submission_{submission_id}_data.json')
-        prompt_path = os.path.join(export_dir, f'submission_{submission_id}_prompt.txt')
-        
         # Create temporary analysis object for export
         temp_analysis = type('obj', (object,), {
             'incremental_score': result['incremental_score'],
@@ -113,17 +106,16 @@ def analyze_submission(submission_id):
             'flags': json.dumps(result['flags'])
         })()
         
+        # Generate LLM exports (stored in database, not filesystem)
+        print(f"   Generating LLM exports...")
         try:
-            export_to_json(submission, temp_analysis, events, result['file_risks'], export_path)
-            print(f"   ✓ Exported data to {export_path}")
-            
-            # Generate LLM prompt
+            llm_json = export_for_llm_analysis(submission, temp_analysis, events, result['file_risks'])
             llm_prompt = generate_llm_prompt(submission, temp_analysis, events, result['file_risks'])
-            with open(prompt_path, 'w') as f:
-                f.write(llm_prompt)
-            print(f"   ✓ Generated LLM prompt at {prompt_path}")
+            print(f"   ✓ LLM exports generated")
         except Exception as e:
-            print(f"   ⚠️  Could not export LLM data: {e}")
+            print(f"   ⚠️  Could not generate LLM data: {e}")
+            llm_json = {}
+            llm_prompt = ""
         
         # Save or update results in database
         analysis = AnalysisResult.query.filter_by(submission_id=submission_id).first()
@@ -134,8 +126,14 @@ def analyze_submission(submission_id):
             analysis.typing_variance = result['typing_variance']
             analysis.error_correction_ratio = result['error_correction_ratio']
             analysis.paste_burst_count = result['paste_burst_count']
+            analysis.session_consistency = result.get('session_consistency', 0)
+            analysis.velocity_avg = result['velocity'].get('average_cpm', 0)
+            analysis.velocity_max = result['velocity'].get('max_cpm', 0)
             analysis.flags = json.dumps(result['flags'])
             analysis.timeline_html = combined_html
+            # Store LLM exports in database
+            analysis.llm_export_json = json.dumps(llm_json)
+            analysis.llm_export_prompt = llm_prompt
         else:
             # Create new
             analysis = AnalysisResult(
@@ -144,8 +142,14 @@ def analyze_submission(submission_id):
                 typing_variance=result['typing_variance'],
                 error_correction_ratio=result['error_correction_ratio'],
                 paste_burst_count=result['paste_burst_count'],
+                session_consistency=result.get('session_consistency', 0),
+                velocity_avg=result['velocity'].get('average_cpm', 0),
+                velocity_max=result['velocity'].get('max_cpm', 0),
                 flags=json.dumps(result['flags']),
-                timeline_html=combined_html
+                timeline_html=combined_html,
+                # Store LLM exports in database
+                llm_export_json=json.dumps(llm_json),
+                llm_export_prompt=llm_prompt
             )
             db.session.add(analysis)
         
@@ -160,6 +164,7 @@ def analyze_submission(submission_id):
         print(f"   Velocity: avg={result['velocity']['average_cpm']:.0f} chars/min, " +
               f"max={result['velocity']['max_cpm']:.0f} chars/min")
         print(f"   Flags: {len(result['flags'])} generated")
+        print(f"   LLM exports stored in database")
         
         # Print flag summary
         high_flags = [f for f in result['flags'] if f['severity'] == 'high']

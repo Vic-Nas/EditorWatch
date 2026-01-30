@@ -78,6 +78,14 @@ class AnalysisResult(db.Model):
     typing_variance = db.Column(db.Float)
     error_correction_ratio = db.Column(db.Float)
     paste_burst_count = db.Column(db.Integer)
+    session_consistency = db.Column(db.Float)  # NEW
+    velocity_avg = db.Column(db.Float)  # NEW
+    velocity_max = db.Column(db.Float)  # NEW
     flags = db.Column(db.Text)  # JSON array of flag objects
     timeline_html = db.Column(db.Text)  # Plotly HTML visualization
+    
+    # NEW: Store LLM-ready data in database
+    llm_export_json = db.Column(db.Text)  # Complete JSON export for LLM analysis
+    llm_export_prompt = db.Column(db.Text)  # Pre-formatted prompt text
+    
     created_at = db.Column(db.DateTime, default=datetime.utcnow)

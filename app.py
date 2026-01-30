@@ -563,15 +563,11 @@ def view_submission_detail(submission_id):
                          work_summary=work_summary)
 
 
-# Add these new routes to app.py (add at the end, before if __name__ == '__main__':)
-
 @app.route('/api/submissions/<int:submission_id>/export/json')
 def export_submission_json(submission_id):
-    """Export submission data as clean JSON for LLM analysis"""
+    """Export submission data as clean JSON for LLM analysis (from database)"""
     if 'logged_in' not in session:
         return jsonify({'error': 'Unauthorized'}), 401
-    
-    from analysis.data_export import export_for_llm_analysis
     
     submission = Submission.query.get_or_404(submission_id)
     analysis = AnalysisResult.query.filter_by(submission_id=submission_id).first()
@@ -579,18 +575,11 @@ def export_submission_json(submission_id):
     if not analysis:
         return jsonify({'error': 'Analysis not complete yet'}), 404
     
-    events = decrypt_data(submission.events_encrypted)
-    
-    # Get file risks from analysis flags
-    flags_data = json.loads(analysis.flags) if analysis.flags else []
-    file_risks = {}
-    # This is a simplified version - the real file_risks come from metrics calculation
-    # but we can reconstruct a basic version from flags
-    
-    data = export_for_llm_analysis(submission, analysis, events, file_risks)
+    if not analysis.llm_export_json:
+        return jsonify({'error': 'LLM export not available - reanalyze submission'}), 404
     
     return Response(
-        json.dumps(data, indent=2),
+        analysis.llm_export_json,
         mimetype='application/json',
         headers={
             'Content-Disposition': f'attachment; filename="submission_{submission_id}_data.json"'
@@ -600,11 +589,9 @@ def export_submission_json(submission_id):
 
 @app.route('/api/submissions/<int:submission_id>/export/prompt')
 def export_submission_prompt(submission_id):
-    """Export LLM-ready prompt for analyzing this submission"""
+    """Export LLM-ready prompt for analyzing this submission (from database)"""
     if 'logged_in' not in session:
         return jsonify({'error': 'Unauthorized'}), 401
-    
-    from analysis.data_export import generate_llm_prompt
     
     submission = Submission.query.get_or_404(submission_id)
     analysis = AnalysisResult.query.filter_by(submission_id=submission_id).first()
@@ -612,17 +599,43 @@ def export_submission_prompt(submission_id):
     if not analysis:
         return jsonify({'error': 'Analysis not complete yet'}), 404
     
-    events = decrypt_data(submission.events_encrypted)
-    file_risks = {}  # Simplified for now
-    
-    prompt = generate_llm_prompt(submission, analysis, events, file_risks)
+    if not analysis.llm_export_prompt:
+        return jsonify({'error': 'LLM prompt not available - reanalyze submission'}), 404
     
     return Response(
-        prompt,
+        analysis.llm_export_prompt,
         mimetype='text/plain',
         headers={
             'Content-Disposition': f'attachment; filename="submission_{submission_id}_llm_prompt.txt"'
         }
+    )
+
+
+# OPTIONAL: Batch export endpoint
+@app.route('/api/assignments/<assignment_id>/export/batch')
+def export_assignment_batch(assignment_id):
+    """Export all submissions for an assignment as a zip file"""
+    if 'logged_in' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    import zipfile
+    from io import BytesIO
+    
+    submissions = Submission.query.filter_by(assignment_id=assignment_id).all()
+    
+    memory_file = BytesIO()
+    with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for submission in submissions:
+            analysis = AnalysisResult.query.filter_by(submission_id=submission.id).first()
+            if analysis and analysis.llm_export_json and analysis.llm_export_prompt:
+                zf.writestr(f'{submission.email}_data.json', analysis.llm_export_json)
+                zf.writestr(f'{submission.email}_prompt.txt', analysis.llm_export_prompt)
+    
+    memory_file.seek(0)
+    return Response(
+        memory_file.read(),
+        mimetype='application/zip',
+        headers={'Content-Disposition': f'attachment; filename="{assignment_id}_exports.zip"'}
     )
 
 if __name__ == '__main__':
