@@ -1,0 +1,105 @@
+name: Publish Extension
+
+on:
+  push:
+    paths:
+      - 'extension/**'
+    branches:
+      - main
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      
+      - name: Install dependencies
+        run: |
+          cd extension
+          npm install
+          npm install -g @vscode/vsce
+      
+      - name: Get current version
+        id: get_version
+        run: |
+          cd extension
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $CURRENT_VERSION"
+      
+      - name: Increment version
+        id: increment_version
+        run: |
+          VERSION="${{ steps.get_version.outputs.current_version }}"
+          
+          # Split version into parts
+          IFS='.' read -r -a parts <<< "$VERSION"
+          MAJOR="${parts[0]}"
+          MINOR="${parts[1]}"
+          PATCH="${parts[2]}"
+          
+          # Increment patch version (base 10)
+          PATCH=$((PATCH + 1))
+          
+          # Handle overflow (9 -> 10 becomes 0.1.0)
+          if [ $PATCH -eq 10 ]; then
+            PATCH=0
+            MINOR=$((MINOR + 1))
+          fi
+          
+          if [ $MINOR -eq 10 ]; then
+            MINOR=0
+            MAJOR=$((MAJOR + 1))
+          fi
+          
+          NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "New version: $NEW_VERSION"
+      
+      - name: Update package.json version
+        run: |
+          cd extension
+          npm version ${{ steps.increment_version.outputs.new_version }} --no-git-tag-version
+      
+      - name: Commit version bump
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add extension/package.json
+          git commit -m "Bump extension version to ${{ steps.increment_version.outputs.new_version }}" || echo "No changes to commit"
+          git push
+      
+      - name: Package extension
+        run: |
+          cd extension
+          vsce package
+      
+      - name: Publish to VS Code Marketplace
+        run: |
+          cd extension
+          vsce publish -p ${{ secrets.VSCE_TOKEN }}
+        env:
+          VSCE_TOKEN: ${{ secrets.VSCE_TOKEN }}
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.increment_version.outputs.new_version }}
+          name: Extension v${{ steps.increment_version.outputs.new_version }}
+          body: |
+            Auto-published extension version ${{ steps.increment_version.outputs.new_version }}
+            
+            Changes in extension/ directory triggered this release.
+          files: extension/*.vsix
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
