@@ -23,15 +23,29 @@ By logging coding patterns (typing rhythm, edit sequences, focus changes), it cr
 - ❌ Not foolproof detection
 - ❌ Not surveillance theater
 - ❌ Not a replacement for good pedagogy
+- ❌ Not complex (intentionally ~1000 lines of code)
+
+## Tech Stack
+
+**Simple and minimal:**
+- Extension: Plain JavaScript (~150 lines)
+- Backend: Python/Flask (~500 lines)
+- Analysis: NumPy/Plotly (~300 lines)
+- Database: PostgreSQL + SQLite
+- Deploy: Railway (~$5/month)
+
+No TypeScript. No React (optional). No microservices. No bloat.
 
 ## Status
 
-**Early prototype.** Built as a research project to explore effort-based academic integrity.
+**Early prototype. Intentionally simple.**
+
+Total scope: ~1000 lines of code (150 JS + 850 Python). The power is in the idea, not complexity.
 
 If you're:
 - A student who's copied code before → This tool would catch patterns, but also understands gray areas
 - An instructor → This gives you data to start conversations, not verdicts
-- A developer → Read ARCHITECTURE.md to see how it works
+- A developer → Read ARCHITECTURE.md to see how simple it actually is
 
 ## Philosophy
 
