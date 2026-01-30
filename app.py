@@ -2,16 +2,25 @@ import os
 import smtplib
 from email.mime.text import MIMEText
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session, Response, send_from_directory
-from models import db, Submission, Assignment, StudentCode, AnalysisResult, init_db
+from models import db, Submission, Assignment, StudentCode, StudentSheet, AnalysisResult, init_db
 from cryptography.fernet import Fernet
 import json
 from datetime import datetime
 import redis
 from rq import Queue
 import secrets
+import logging
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 # Database configuration
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///editorwatch.db')
@@ -61,7 +70,7 @@ def decrypt_data(encrypted_data):
 def send_code_email(email, code, assignment_name):
     """Send access code via email - fails gracefully if SMTP not configured"""
     if not SMTP_ENABLED:
-        print(f"[SMTP disabled] Code for {email}: {code}")
+        logger.info(f"[SMTP disabled] Code for {email}: {code}")
         return False
     
     try:
@@ -85,10 +94,10 @@ This code is unique to you and should not be shared.
             server.login(os.environ.get('SMTP_USER'), os.environ.get('SMTP_PASSWORD'))
             server.send_message(msg)
         
-        print(f"✅ Sent code to {email}")
+        logger.info(f"✅ Sent code to {email}")
         return True
     except Exception as e:
-        print(f"❌ Failed to send email to {email}: {e}")
+        logger.error(f"❌ Failed to send email to {email}: {e}")
         return False
 
 
@@ -131,6 +140,7 @@ def initialize_database():
         db.create_all()
         return jsonify({'success': True, 'message': 'Database tables created successfully'})
     except Exception as e:
+        logger.error(f"Database initialization error: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -143,6 +153,7 @@ def submit_assignment():
         # Validate required fields
         required = ['code', 'assignment_id', 'events']
         if not all(field in data for field in required):
+            logger.warning(f"Missing required fields in submission")
             return jsonify({'error': 'Missing required fields'}), 400
         
         # Verify code and get student email
@@ -152,14 +163,17 @@ def submit_assignment():
         ).first()
         
         if not student_code:
+            logger.warning(f"Invalid access code for assignment {data['assignment_id']}")
             return jsonify({'error': 'Invalid access code'}), 403
         
         # Check assignment exists and deadline hasn't passed
         assignment = Assignment.query.filter_by(assignment_id=data['assignment_id']).first()
         if not assignment:
+            logger.warning(f"Assignment not found: {data['assignment_id']}")
             return jsonify({'error': 'Assignment not found'}), 404
         
         if datetime.utcnow() > assignment.deadline:
+            logger.warning(f"Deadline passed for {data['assignment_id']}")
             return jsonify({'error': 'Deadline has passed'}), 403
         
         # Encrypt events
@@ -173,6 +187,7 @@ def submit_assignment():
         
         if submission:
             # Update existing submission
+            logger.info(f"Updating submission for {student_code.email} in {data['assignment_id']}")
             submission.events_encrypted = events_encrypted
             submission.submitted_at = datetime.utcnow()
             
@@ -180,6 +195,7 @@ def submit_assignment():
             AnalysisResult.query.filter_by(submission_id=submission.id).delete()
         else:
             # Create new submission
+            logger.info(f"New submission from {student_code.email} for {data['assignment_id']}")
             submission = Submission(
                 email=student_code.email,
                 assignment_id=data['assignment_id'],
@@ -191,6 +207,7 @@ def submit_assignment():
         
         # Queue analysis job
         task_queue.enqueue('analysis.worker.analyze_submission', submission.id)
+        logger.info(f"Queued analysis for submission {submission.id}")
         
         return jsonify({
             'success': True,
@@ -199,6 +216,7 @@ def submit_assignment():
         }), 201
         
     except Exception as e:
+        logger.error(f"Error in submit_assignment: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 
@@ -234,6 +252,7 @@ def manage_assignment(assignment_id):
             assignment.track_patterns = json.dumps(data['track_patterns'])
         
         db.session.commit()
+        logger.info(f"Updated assignment {assignment_id}")
         return jsonify({'success': True, 'message': 'Assignment updated'})
     
     elif request.method == 'DELETE':
@@ -242,6 +261,7 @@ def manage_assignment(assignment_id):
         Submission.query.filter_by(assignment_id=assignment_id).delete()
         db.session.delete(assignment)
         db.session.commit()
+        logger.info(f"Deleted assignment {assignment_id}")
         return jsonify({'success': True, 'message': 'Assignment deleted'})
 
 
@@ -252,59 +272,83 @@ def assignments():
         return jsonify({'error': 'Unauthorized'}), 401
     
     if request.method == 'POST':
-        data = request.json
-        
-        # Auto-generate assignment ID
-        course_prefix = data.get('course', 'COURSE').replace(' ', '').upper()[:10]
-        assignment_id = f"{course_prefix}_{secrets.token_hex(4)}"
-        
-        assignment = Assignment(
-            assignment_id=assignment_id,
-            course=data.get('course', ''),
-            name=data['name'],
-            track_patterns=json.dumps(data.get('track_patterns', ['*.py'])),
-            deadline=datetime.fromisoformat(data['deadline'])
-        )
-        db.session.add(assignment)
-        db.session.commit()
-        
-        # Generate and send codes to students
-        students = data.get('students', [])
-        codes_sent = 0
-        codes_failed = []
-        
-        for email in students:
-            email = email.strip()
-            if not email:
-                continue
+        try:
+            data = request.json
+            logger.info(f"Creating assignment with data: {data}")
             
-            # Generate unique code
-            code = secrets.token_hex(3).upper()  # 6 character code
+            # Auto-generate assignment ID
+            course_prefix = data.get('course', 'COURSE').replace(' ', '').upper()[:10]
+            assignment_id = f"{course_prefix}_{secrets.token_hex(4)}"
             
-            # Store code
-            student_code = StudentCode(
+            assignment = Assignment(
                 assignment_id=assignment_id,
-                email=email,
-                code=code
+                course=data.get('course', ''),
+                name=data['name'],
+                track_patterns=json.dumps(data.get('track_patterns', ['*.py'])),
+                deadline=datetime.fromisoformat(data['deadline'])
             )
-            db.session.add(student_code)
+            db.session.add(assignment)
+            db.session.commit()
+            logger.info(f"Created assignment {assignment_id}")
             
-            # Try to send email
-            if send_code_email(email, code, assignment.name):
-                codes_sent += 1
-            else:
-                codes_failed.append({'email': email, 'code': code})
+            # Generate and send codes to students
+            students = data.get('students', [])
+            codes_sent = 0
+            codes_failed = []
+            
+            for student in students:
+                # Handle both dict format {email, first_name, last_name} and string format
+                if isinstance(student, dict):
+                    email = student.get('email', '').strip()
+                    first_name = student.get('first_name', '').strip()
+                    last_name = student.get('last_name', '').strip()
+                else:
+                    email = str(student).strip()
+                    first_name = ''
+                    last_name = ''
+                
+                if not email:
+                    continue
+                
+                # Generate unique code
+                code = secrets.token_hex(3).upper()  # 6 character code
+                
+                # Store code
+                student_code = StudentCode(
+                    assignment_id=assignment_id,
+                    email=email,
+                    first_name=first_name or None,
+                    last_name=last_name or None,
+                    code=code
+                )
+                db.session.add(student_code)
+                
+                # Try to send email
+                if send_code_email(email, code, assignment.name):
+                    codes_sent += 1
+                else:
+                    codes_failed.append({
+                        'email': email,
+                        'first_name': first_name,
+                        'last_name': last_name,
+                        'code': code
+                    })
+            
+            db.session.commit()
+            logger.info(f"Generated {len(students)} codes, sent {codes_sent} emails")
+            
+            return jsonify({
+                'success': True, 
+                'assignment_id': assignment.assignment_id,
+                'codes_sent': codes_sent,
+                'codes_failed': codes_failed,
+                'smtp_enabled': SMTP_ENABLED,
+                'config_url': url_for('download_config', assignment_id=assignment_id, _external=True)
+            }), 201
         
-        db.session.commit()
-        
-        return jsonify({
-            'success': True, 
-            'assignment_id': assignment.assignment_id,
-            'codes_sent': codes_sent,
-            'codes_failed': codes_failed,
-            'smtp_enabled': SMTP_ENABLED,
-            'config_url': url_for('download_config', assignment_id=assignment_id, _external=True)
-        }), 201
+        except Exception as e:
+            logger.error(f"Error creating assignment: {e}", exc_info=True)
+            return jsonify({'error': str(e)}), 500
     
     assignments = Assignment.query.all()
     return jsonify([{
@@ -314,6 +358,45 @@ def assignments():
         'deadline': a.deadline.isoformat(),
         'created_at': a.created_at.isoformat()
     } for a in assignments])
+
+
+@app.route('/api/sheets', methods=['GET', 'POST'])
+def sheets():
+    """List or create student sheets"""
+    if 'logged_in' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    if request.method == 'POST':
+        try:
+            data = request.json
+            
+            sheet = StudentSheet(
+                name=data['name'],
+                students=json.dumps(data['students'])
+            )
+            db.session.add(sheet)
+            db.session.commit()
+            logger.info(f"Created student sheet: {data['name']}")
+            
+            return jsonify({
+                'success': True,
+                'id': sheet.id,
+                'name': sheet.name
+            }), 201
+        
+        except Exception as e:
+            logger.error(f"Error creating sheet: {e}", exc_info=True)
+            return jsonify({'error': str(e)}), 500
+    
+    # GET
+    sheets = StudentSheet.query.all()
+    return jsonify([{
+        'id': s.id,
+        'name': s.name,
+        'students': s.students,
+        'student_count': len(json.loads(s.students)),
+        'created_at': s.created_at.isoformat()
+    } for s in sheets])
 
 
 @app.route('/api/assignments/<assignment_id>/config')
@@ -358,6 +441,16 @@ def get_submissions(assignment_id):
     for sub in submissions:
         analysis = AnalysisResult.query.filter_by(submission_id=sub.id).first()
         
+        # Get student name
+        student_code = StudentCode.query.filter_by(
+            assignment_id=assignment_id,
+            email=sub.email
+        ).first()
+        
+        student_name = sub.email
+        if student_code and student_code.first_name:
+            student_name = f"{student_code.first_name} {student_code.last_name}".strip()
+        
         # Determine overall status
         status = 'pending'
         if analysis:
@@ -375,6 +468,7 @@ def get_submissions(assignment_id):
         results.append({
             'id': sub.id,
             'email': sub.email,
+            'student_name': student_name,
             'submitted_at': sub.submitted_at.isoformat(),
             'status': status,
             'analysis': {
@@ -429,15 +523,34 @@ def view_submission_detail(submission_id):
     
     events = decrypt_data(submission.events_encrypted)
     
+    # Get student name
+    student_code = StudentCode.query.filter_by(
+        assignment_id=submission.assignment_id,
+        email=submission.email
+    ).first()
+    
+    student_name = submission.email
+    if student_code and student_code.first_name:
+        student_name = f"{student_code.first_name} {student_code.last_name}".strip()
+    
     flags = []
     if analysis and analysis.flags:
         flags = json.loads(analysis.flags)
+    
+    # Generate timeline
+    from analysis.event_parser import parse_events_to_timeline, format_timeline_for_display, get_event_summary
+    timeline = parse_events_to_timeline(events)
+    timeline_html = format_timeline_for_display(timeline)
+    work_summary = get_event_summary(events)
     
     return render_template('submission_detail.html',
                          submission=submission,
                          analysis=analysis,
                          events=events,
-                         flags=flags)
+                         flags=flags,
+                         student_name=student_name,
+                         timeline_html=timeline_html,
+                         work_summary=work_summary)
 
 
 if __name__ == '__main__':
