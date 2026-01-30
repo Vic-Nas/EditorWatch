@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>EditorWatch - Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f5f7fa;
+        }
+        .header {
+            background: white;
+            padding: 20px 40px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 {
+            font-size: 24px;
+            color: #333;
+        }
+        .header a {
+            color: #667eea;
+            text-decoration: none;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+        .section {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .section h2 {
+            margin-bottom: 20px;
+            color: #333;
+        }
+        .btn {
+            background: #667eea;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn:hover {
+            background: #5568d3;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #333;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            max-width: 500px;
+            width: 90%;
+        }
+        .modal input {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .close {
+            float: right;
+            cursor: pointer;
+            font-size: 24px;
+            color: #999;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>EditorWatch Dashboard</h1>
+        <a href="/logout">Logout</a>
+    </div>
+    
+    <div class="container">
+        <div class="section">
+            <h2>Assignments</h2>
+            <button class="btn" onclick="showCreateModal()">Create Assignment</button>
+            <div id="assignments-list" style="margin-top: 20px;">
+                <p>Loading assignments...</p>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Recent Submissions</h2>
+            <div id="submissions-list">
+                <p>Loading submissions...</p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Create Assignment Modal -->
+    <div id="createModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="hideCreateModal()">&times;</span>
+            <h2>Create Assignment</h2>
+            <form id="createForm" onsubmit="createAssignment(event)">
+                <input type="text" id="assignment_id" placeholder="Assignment ID (e.g., cs101_hw3)" required>
+                <input type="text" id="course" placeholder="Course (e.g., CS 101)">
+                <input type="text" id="name" placeholder="Assignment Name" required>
+                <input type="text" id="track_patterns" placeholder="File patterns (*.py)" value="*.py">
+                <input type="datetime-local" id="deadline" required>
+                <button type="submit" class="btn" style="margin-top: 10px;">Create</button>
+            </form>
+        </div>
+    </div>
+    
+    <script>
+        async function loadAssignments() {
+            const response = await fetch('/api/assignments');
+            const assignments = await response.json();
+            
+            const html = assignments.length ? `
+                <table>
+                    <tr>
+                        <th>Assignment ID</th>
+                        <th>Course</th>
+                        <th>Name</th>
+                        <th>Deadline</th>
+                        <th>Actions</th>
+                    </tr>
+                    ${assignments.map(a => `
+                        <tr>
+                            <td>${a.assignment_id}</td>
+                            <td>${a.course}</td>
+                            <td>${a.name}</td>
+                            <td>${new Date(a.deadline).toLocaleString()}</td>
+                            <td>
+                                <a href="#" onclick="viewSubmissions('${a.assignment_id}')">View Submissions</a>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </table>
+            ` : '<p>No assignments yet. Create one to get started.</p>';
+            
+            document.getElementById('assignments-list').innerHTML = html;
+        }
+        
+        async function viewSubmissions(assignmentId) {
+            const response = await fetch(`/api/assignments/${assignmentId}/submissions`);
+            const submissions = await response.json();
+            
+            const html = submissions.length ? `
+                <h3>Submissions for ${assignmentId}</h3>
+                <table>
+                    <tr>
+                        <th>Student ID</th>
+                        <th>Submitted</th>
+                        <th>Incremental</th>
+                        <th>Variance</th>
+                        <th>Corrections</th>
+                        <th>Paste Bursts</th>
+                        <th>Actions</th>
+                    </tr>
+                    ${submissions.map(s => `
+                        <tr>
+                            <td>${s.student_id}</td>
+                            <td>${new Date(s.submitted_at).toLocaleString()}</td>
+                            <td>${s.analysis?.incremental_score?.toFixed(2) || 'N/A'}</td>
+                            <td>${s.analysis?.typing_variance?.toFixed(2) || 'N/A'}</td>
+                            <td>${s.analysis?.error_correction_ratio?.toFixed(2) || 'N/A'}</td>
+                            <td>${s.analysis?.paste_burst_count || 'N/A'}</td>
+                            <td>
+                                <a href="#" onclick="viewDetail(${s.id})">View Detail</a>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </table>
+            ` : '<p>No submissions yet.</p>';
+            
+            document.getElementById('submissions-list').innerHTML = html;
+        }
+        
+        async function viewDetail(submissionId) {
+            window.location.href = `/submission/${submissionId}`;
+        }
+        
+        function showCreateModal() {
+            document.getElementById('createModal').style.display = 'flex';
+        }
+        
+        function hideCreateModal() {
+            document.getElementById('createModal').style.display = 'none';
+        }
+        
+        async function createAssignment(event) {
+            event.preventDefault();
+            
+            const data = {
+                assignment_id: document.getElementById('assignment_id').value,
+                course: document.getElementById('course').value,
+                name: document.getElementById('name').value,
+                track_patterns: document.getElementById('track_patterns').value.split(',').map(s => s.trim()),
+                deadline: document.getElementById('deadline').value
+            };
+            
+            const response = await fetch('/api/assignments', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data)
+            });
+            
+            if (response.ok) {
+                hideCreateModal();
+                loadAssignments();
+                alert('Assignment created successfully!');
+            } else {
+                alert('Error creating assignment');
+            }
+        }
+        
+        // Load data on page load
+        loadAssignments();
+    </script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "assignment_id": "cs101_hw3_example",
+  "server": "https://editorwatch-production.up.railway.app",
+  "track_patterns": ["*.py"],
+  "deadline": "2025-02-15T23:59:59Z",
+  "course": "CS 101",
+  "name": "Homework 3 - Binary Trees"
+}

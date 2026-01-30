@@ -1,0 +1,36 @@
+{
+  "name": "editorwatch",
+  "displayName": "EditorWatch",
+  "description": "Code process monitor for programming assignments - making cheating harder than learning",
+  "version": "0.1.0",
+  "publisher": "editorwatch",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/editorwatch"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "editorwatch.submit",
+        "title": "EditorWatch: Submit Assignment"
+      },
+      {
+        "command": "editorwatch.disable",
+        "title": "EditorWatch: Disable Monitoring"
+      }
+    ]
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.2.2"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0"
+  }
+}

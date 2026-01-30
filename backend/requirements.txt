@@ -1,0 +1,10 @@
+Flask==3.0.0
+Flask-SQLAlchemy==3.1.1
+psycopg2-binary==2.9.9
+redis==5.0.1
+rq==1.15.1
+cryptography==41.0.7
+python-dotenv==1.0.0
+gunicorn==21.2.0
+numpy==1.26.2
+plotly==5.18.0
