@@ -230,6 +230,8 @@
                             <td>
                                 <a href="/api/assignments/${a.assignment_id}/config" class="btn btn-small btn-secondary" download>⬇ Download Config</a>
                                 <button class="btn btn-small" onclick="viewSubmissions('${a.assignment_id}')">View Submissions</button>
+                                <button class="btn btn-small" onclick="editAssignment('${a.assignment_id}')" style="background: #f39c12;">✏️ Edit</button>
+                                <button class="btn btn-small" onclick="deleteAssignment('${a.assignment_id}')" style="background: #e74c3c;">🗑️ Delete</button>
                             </td>
                         </tr>
                     `).join('')}
@@ -336,6 +338,101 @@
         
         // Load data on page load
         loadAssignments();
+        
+        async function editAssignment(assignmentId) {
+            // Get assignment details
+            const response = await fetch(`/api/assignments/${assignmentId}`);
+            const assignment = await response.json();
+            
+            // Pre-fill form
+            document.getElementById('name').value = assignment.name;
+            document.getElementById('course').value = assignment.course;
+            
+            // Convert ISO to datetime-local format
+            const deadline = new Date(assignment.deadline);
+            const localDate = new Date(deadline.getTime() - deadline.getTimezoneOffset() * 60000);
+            document.getElementById('deadline').value = localDate.toISOString().slice(0, 16);
+            
+            document.getElementById('track_patterns').value = assignment.track_patterns.join(', ');
+            
+            // Set required fields checkboxes
+            document.getElementById('field_name').checked = assignment.required_fields.includes('name');
+            document.getElementById('field_email').checked = assignment.required_fields.includes('email');
+            
+            // Change form to edit mode
+            const form = document.getElementById('createForm');
+            form.onsubmit = async (e) => {
+                e.preventDefault();
+                await updateAssignment(assignmentId);
+            };
+            
+            // Show modal with different title
+            document.querySelector('#createModal h2').textContent = 'Edit Assignment';
+            document.querySelector('#createForm button[type="submit"]').textContent = 'Update';
+            showCreateModal();
+        }
+        
+        async function updateAssignment(assignmentId) {
+            const requiredFields = ['matricule'];
+            if (document.getElementById('field_name').checked) requiredFields.push('name');
+            if (document.getElementById('field_email').checked) requiredFields.push('email');
+            
+            const data = {
+                name: document.getElementById('name').value,
+                course: document.getElementById('course').value,
+                deadline: document.getElementById('deadline').value,
+                required_fields: requiredFields,
+                track_patterns: document.getElementById('track_patterns').value.split(',').map(s => s.trim())
+            };
+            
+            const response = await fetch(`/api/assignments/${assignmentId}`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data)
+            });
+            
+            if (response.ok) {
+                hideCreateModal();
+                loadAssignments();
+                alert('Assignment updated successfully!');
+                
+                // Reset form back to create mode
+                resetFormToCreateMode();
+            } else {
+                alert('Error updating assignment');
+            }
+        }
+        
+        async function deleteAssignment(assignmentId) {
+            const confirmed = confirm(
+                'Delete this assignment?\n\n' +
+                'This will permanently delete:\n' +
+                '- The assignment configuration\n' +
+                '- All student submissions\n' +
+                '- All analysis data\n\n' +
+                'This cannot be undone!'
+            );
+            
+            if (!confirmed) return;
+            
+            const response = await fetch(`/api/assignments/${assignmentId}`, {
+                method: 'DELETE'
+            });
+            
+            if (response.ok) {
+                loadAssignments();
+                alert('Assignment deleted');
+            } else {
+                alert('Error deleting assignment');
+            }
+        }
+        
+        function resetFormToCreateMode() {
+            const form = document.getElementById('createForm');
+            form.onsubmit = createAssignment;
+            document.querySelector('#createModal h2').textContent = 'Create Assignment';
+            document.querySelector('#createForm button[type="submit"]').textContent = 'Create';
+        }
     </script>
 </body>
 </html>

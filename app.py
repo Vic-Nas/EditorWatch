@@ -135,6 +135,51 @@ def submit_assignment():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/assignments/<assignment_id>', methods=['GET', 'PUT', 'DELETE'])
+def manage_assignment(assignment_id):
+    """Get, update, or delete an assignment"""
+    if 'logged_in' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    assignment = Assignment.query.filter_by(assignment_id=assignment_id).first_or_404()
+    
+    if request.method == 'GET':
+        return jsonify({
+            'assignment_id': assignment.assignment_id,
+            'course': assignment.course,
+            'name': assignment.name,
+            'deadline': assignment.deadline.isoformat(),
+            'track_patterns': json.loads(assignment.track_patterns),
+            'required_fields': json.loads(assignment.required_fields) if assignment.required_fields else ['matricule'],
+            'created_at': assignment.created_at.isoformat()
+        })
+    
+    elif request.method == 'PUT':
+        # Update assignment
+        data = request.json
+        
+        if 'name' in data:
+            assignment.name = data['name']
+        if 'course' in data:
+            assignment.course = data['course']
+        if 'deadline' in data:
+            assignment.deadline = datetime.fromisoformat(data['deadline'])
+        if 'track_patterns' in data:
+            assignment.track_patterns = json.dumps(data['track_patterns'])
+        if 'required_fields' in data:
+            assignment.required_fields = json.dumps(data['required_fields'])
+        
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Assignment updated'})
+    
+    elif request.method == 'DELETE':
+        # Delete assignment and all submissions
+        Submission.query.filter_by(assignment_id=assignment_id).delete()
+        db.session.delete(assignment)
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Assignment deleted'})
+
+
 @app.route('/api/assignments', methods=['GET', 'POST'])
 def assignments():
     """List or create assignments"""
@@ -185,10 +230,12 @@ def download_config(assignment_id):
     """Download .editorwatch config file for an assignment"""
     assignment = Assignment.query.filter_by(assignment_id=assignment_id).first_or_404()
     
-    # Get server URL
+    # Get server URL - force HTTPS if from Railway
     server_url = os.environ.get('SERVER_URL')
     if not server_url:
-        server_url = request.url_root.rstrip('/')
+        # Build from request, ensuring HTTPS
+        scheme = 'https' if request.headers.get('X-Forwarded-Proto') == 'https' else request.scheme
+        server_url = f"{scheme}://{request.host}"
     
     config = {
         'assignment_id': assignment.assignment_id,
