@@ -30,7 +30,7 @@ EditorWatch helps educators detect AI-generated or copied code by monitoring the
    - Set deadline and file patterns to track
    - Students receive access codes via email
 
-3. **Share the `.editorwatch` file** with students
+3. **Share the `editorwatch` file** with students
 
 4. **Review submissions** with detailed analytics
 
@@ -38,7 +38,7 @@ EditorWatch helps educators detect AI-generated or copied code by monitoring the
 
 1. **Install extension** from VS Code Marketplace (search "EditorWatch")
 
-2. **Place `.editorwatch` file** in your assignment folder
+2. **Place `editorwatch` file** in your assignment folder (root directory, no extension)
 
 3. **Enter your access code** when prompted
 
@@ -122,7 +122,7 @@ alice@uni.edu,Alice,Johnson
 bob@uni.edu,Bob,Smith
 ```
 
-### Assignment Config (`.editorwatch` file)
+### Assignment Config (`editorwatch` file)
 ```json
 {
   "assignment_id": "CS101_HW3",
@@ -154,7 +154,3 @@ See [LICENCE.md](LICENCE.md) for details.
 - 📖 [Documentation](https://github.com/Vic-Nas/EditorWatch/wiki)
 - 🐛 [Report Issues](https://github.com/Vic-Nas/EditorWatch/issues)
 - 💬 [Discussions](https://github.com/Vic-Nas/EditorWatch/discussions)
-
-## Credits
-
-Created by Victorio Nascimento • Licensed under MIT (Educational Use)

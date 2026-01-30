@@ -428,12 +428,12 @@ def download_config(assignment_id):
         'track_patterns': json.loads(assignment.track_patterns)
     }
     
-    # Use .editorwatch as filename (note the leading dot)
+    # Use editorwatch as filename (no leading dot for better compatibility)
     return Response(
         json.dumps(config, indent=2),
         mimetype='application/json',
         headers={
-            'Content-Disposition': 'attachment; filename=".editorwatch"'
+            'Content-Disposition': 'attachment; filename="editorwatch"'
         }
     )
 

@@ -15,13 +15,13 @@ Monitor your coding process for programming assignments.
 ### How to Use
 
 1. **Get files from your professor:**
-   - `.editorwatch` config file
+   - `editorwatch` config file
    - Your access code (via email)
 
-2. **Place `.editorwatch` in your assignment folder:**
+2. **Place `editorwatch` in your assignment folder:**
    ```
    my-homework/
-   ├── .editorwatch    ← Put it here
+   ├── editorwatch    ← Put it here (no file extension)
    ├── main.py
    └── ...
    ```
@@ -40,8 +40,8 @@ Monitor your coding process for programming assignments.
 ### Troubleshooting
 
 **Extension not activating?**
-- Ensure `.editorwatch` is in the root folder
-- File must be named exactly `.editorwatch`
+- Ensure `editorwatch` is in the root folder
+- File must be named exactly `editorwatch` (no extension, no dot)
 - Reload VS Code: `Ctrl+Shift+P` → "Reload Window"
 
 **Can't submit?**
@@ -55,7 +55,7 @@ See the main [README](../README.md) for server setup and assignment creation.
 
 ## Privacy
 
-- Only active when `.editorwatch` file is present
+- Only active when `editorwatch` file is present
 - You must explicitly enable monitoring
 - Only tracks files matching patterns (e.g., `*.py`)
 - Data deleted after grading period

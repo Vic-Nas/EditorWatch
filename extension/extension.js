@@ -66,8 +66,8 @@ function activate(context) {
     // Check for assignment immediately and on workspace change
     checkForAssignment(context);
     
-    // Watch for .editorwatch file changes
-    const watcher = vscode.workspace.createFileSystemWatcher('**/.editorwatch');
+    // Watch for editorwatch file changes
+    const watcher = vscode.workspace.createFileSystemWatcher('**/editorwatch');
     watcher.onDidCreate(() => checkForAssignment(context));
     watcher.onDidChange(() => checkForAssignment(context));
     context.subscriptions.push(watcher);
@@ -103,7 +103,7 @@ function activate(context) {
                 );
             } else {
                 vscode.window.showInformationMessage(
-                    'EditorWatch: No assignment detected. Add a .editorwatch file to your project.'
+                    'EditorWatch: No assignment detected. Add an editorwatch file to your project.'
                 );
             }
         })
@@ -118,12 +118,12 @@ function checkForAssignment(context) {
     }
     
     const workspaceRoot = workspaceFolders[0].uri.fsPath;
-    const editorwatchPath = path.join(workspaceRoot, '.editorwatch');
+    const editorwatchPath = path.join(workspaceRoot, 'editorwatch');
     
     console.log('EditorWatch: Checking for config at:', editorwatchPath);
     
     if (!fs.existsSync(editorwatchPath)) {
-        console.log('EditorWatch: No .editorwatch file found');
+        console.log('EditorWatch: No editorwatch file found');
         return;
     }
     
