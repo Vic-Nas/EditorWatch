@@ -4,11 +4,11 @@ from datetime import datetime
 
 def incremental_score(events):
     """
-    Calculate incremental development score.
+    Calculate incremental development score (0-10 scale).
     Low score = sudden large insertions (suspicious)
     High score = gradual development (normal)
     
-    Returns: 0.0 to 1.0
+    Returns: 0.0 to 10.0
     """
     if not events:
         return 0.0
@@ -21,17 +21,19 @@ def incremental_score(events):
     large_inserts = sum(1 for e in insert_events if e['char_count'] > 100)
     
     # Calculate score (inverse of large insert ratio)
-    score = 1.0 - (large_inserts / len(insert_events))
-    return round(score, 3)
+    raw_score = 1.0 - (large_inserts / len(insert_events))
+    
+    # Convert to 0-10 scale
+    return round(raw_score * 10, 1)
 
 
 def typing_variance(events):
     """
-    Calculate variance in typing speed.
+    Calculate variance in typing speed (0-10 scale).
     Low variance = robotic/pasted (suspicious)
     High variance = natural human typing (normal)
     
-    Returns: 0.0 to 1.0
+    Returns: 0.0 to 10.0
     """
     if len(events) < 2:
         return 0.0
@@ -59,18 +61,18 @@ def typing_variance(events):
     
     cv = np.sqrt(variance) / mean
     
-    # Normalize to 0-1 range (cap at 1.0)
-    score = min(cv / 2.0, 1.0)
-    return round(score, 3)
+    # Normalize to 0-10 range
+    raw_score = min(cv / 2.0, 1.0)
+    return round(raw_score * 10, 1)
 
 
 def error_correction_ratio(events):
     """
-    Calculate ratio of deletions to insertions.
+    Calculate ratio of deletions to insertions (0-10 scale).
     Low ratio = no mistakes/corrections (suspicious)
     High ratio = natural trial and error (normal)
     
-    Returns: 0.0 to 1.0
+    Returns: 0.0 to 10.0
     """
     if not events:
         return 0.0
@@ -84,8 +86,8 @@ def error_correction_ratio(events):
     ratio = delete_count / insert_count
     
     # Normalize (typical ratio is 0.1-0.3, cap at 0.5)
-    score = min(ratio / 0.5, 1.0)
-    return round(score, 3)
+    raw_score = min(ratio / 0.5, 1.0)
+    return round(raw_score * 10, 1)
 
 
 def paste_burst_detection(events):
@@ -163,11 +165,11 @@ def code_velocity_analysis(events):
 
 def session_consistency_score(events):
     """
-    Analyze consistency of work sessions.
+    Analyze consistency of work sessions (0-10 scale).
     AI-generated code tends to appear in one or two sessions.
     Human work shows 3+ sessions with consistent patterns.
     
-    Returns: 0.0 to 1.0
+    Returns: 0.0 to 10.0
     """
     if not events:
         return 0.0
@@ -213,7 +215,8 @@ def session_consistency_score(events):
     else:
         consistency_score = 0.0
     
-    return round((session_score + consistency_score) / 2, 3)
+    raw_score = (session_score + consistency_score) / 2
+    return round(raw_score * 10, 1)
 
 
 def file_level_analysis(events):
@@ -294,6 +297,135 @@ def file_level_analysis(events):
     return file_risks
 
 
+def generate_detailed_flags(metrics, events, work_patterns):
+    """
+    Generate top 3 most important flags only (simplified).
+    
+    Returns: list of flag objects with severity and detailed message
+    """
+    flags = []
+    
+    total_chars = work_patterns.get('total_chars_inserted', 0)
+    paste_percentage = work_patterns.get('paste_percentage', 0)
+    active_time = work_patterns.get('active_coding_minutes', 0)
+    
+    velocity = metrics.get('velocity', {})
+    file_risks = metrics.get('file_risks', {})
+    
+    # Collect all potential flags with priority scores
+    potential_flags = []
+    
+    # CRITICAL FLAGS (priority 10)
+    if paste_percentage > 70 and total_chars > 500:
+        potential_flags.append({
+            'priority': 10,
+            'severity': 'high',
+            'category': 'Code Origin',
+            'message': f'{paste_percentage:.0f}% of code pasted in blocks rather than typed gradually'
+        })
+    
+    if active_time < 10 and total_chars > 500:
+        potential_flags.append({
+            'priority': 10,
+            'severity': 'high',
+            'category': 'Time Analysis',
+            'message': f'Entire submission completed in {active_time:.1f} minutes'
+        })
+    
+    if velocity.get('average_cpm', 0) > 150:
+        potential_flags.append({
+            'priority': 10,
+            'severity': 'high',
+            'category': 'Typing Speed',
+            'message': f'{velocity["average_cpm"]:.0f} chars/min typing speed (human: 40-80 chars/min)'
+        })
+    
+    # File-specific critical issues (priority 9)
+    high_risk_files = [f for f, data in file_risks.items() if data['risk'] == 'high']
+    if high_risk_files:
+        for f in high_risk_files[:1]:  # Only first file
+            potential_flags.append({
+                'priority': 9,
+                'severity': 'high',
+                'category': 'File Analysis',
+                'message': f'{f}: {"; ".join(file_risks[f]["issues"])}'
+            })
+    
+    # WARNING FLAGS (priority 5)
+    if metrics['incremental_score'] < 4.0:
+        potential_flags.append({
+            'priority': 5,
+            'severity': 'medium',
+            'category': 'Development Pattern',
+            'message': f'Code appeared in chunks (score: {metrics["incremental_score"]}/10)'
+        })
+    
+    if metrics['typing_variance'] < 3.0:
+        potential_flags.append({
+            'priority': 5,
+            'severity': 'medium',
+            'category': 'Typing Behavior',
+            'message': f'Robotic typing patterns (variance: {metrics["typing_variance"]}/10)'
+        })
+    
+    if metrics['error_correction_ratio'] < 2.0 and total_chars > 200:
+        potential_flags.append({
+            'priority': 5,
+            'severity': 'medium',
+            'category': 'Error Correction',
+            'message': f'Almost no corrections (score: {metrics["error_correction_ratio"]}/10)'
+        })
+    
+    if metrics.get('session_consistency', 0) < 3.0:
+        potential_flags.append({
+            'priority': 5,
+            'severity': 'medium',
+            'category': 'Work Sessions',
+            'message': f'Very few work sessions (score: {metrics.get("session_consistency", 0)}/10)'
+        })
+    
+    # Sort by priority and take top 3
+    potential_flags.sort(key=lambda x: x['priority'], reverse=True)
+    flags = potential_flags[:3]
+    
+    # Remove priority field before returning
+    for flag in flags:
+        flag.pop('priority', None)
+    
+    # If no flags, add positive indicator
+    if not flags:
+        flags.append({
+            'severity': 'none',
+            'category': 'Assessment',
+            'message': 'No suspicious patterns detected - work appears authentic'
+        })
+    
+    return flags
+
+
+def calculate_overall_score(metrics):
+    """
+    Calculate overall authenticity score (0-10).
+    
+    Returns: float 0.0-10.0
+    """
+    # Weight the metrics
+    score = (
+        metrics['incremental_score'] * 0.3 +
+        metrics['typing_variance'] * 0.25 +
+        metrics['error_correction_ratio'] * 0.25 +
+        metrics.get('session_consistency', 0) * 0.2
+    )
+    
+    # Penalize for paste bursts
+    if metrics['paste_burst_count'] > 5:
+        score = score * 0.5
+    elif metrics['paste_burst_count'] > 2:
+        score = score * 0.7
+    
+    return round(score, 1)
+
+
 def analyze_work_patterns(events):
     """
     Analyze detailed work patterns for human-readable insights.
@@ -329,176 +461,20 @@ def analyze_work_patterns(events):
     large_paste_chars = sum(e['char_count'] for e in large_pastes)
     paste_percentage = (large_paste_chars / total_chars_inserted * 100) if total_chars_inserted > 0 else 0
     
-    # File activity
-    files = {}
-    for e in events:
-        file = e.get('file', 'unknown')
-        if file not in files:
-            files[file] = {'inserts': 0, 'deletes': 0, 'chars': 0}
-        if e['type'] == 'insert':
-            files[file]['inserts'] += 1
-            files[file]['chars'] += e['char_count']
-        elif e['type'] == 'delete':
-            files[file]['deletes'] += 1
-    
     return {
         'total_duration_minutes': round(total_duration_minutes, 1),
         'active_coding_minutes': round(active_time, 1),
         'breaks_count': len(breaks),
-        'longest_break_minutes': round(max(breaks), 1) if breaks else 0,
         'total_chars_inserted': total_chars_inserted,
         'total_chars_deleted': total_chars_deleted,
         'paste_percentage': round(paste_percentage, 1),
-        'large_pastes_count': len(large_pastes),
-        'files_edited': len(files),
-        'file_details': files
+        'large_pastes_count': len(large_pastes)
     }
-
-
-def generate_detailed_flags(metrics, events, work_patterns):
-    """
-    Generate comprehensive, human-readable flags based on all analysis.
-    
-    Returns: list of flag objects with severity and detailed message
-    """
-    flags = []
-    
-    total_chars = work_patterns.get('total_chars_inserted', 0)
-    paste_percentage = work_patterns.get('paste_percentage', 0)
-    active_time = work_patterns.get('active_coding_minutes', 0)
-    
-    # Get additional metrics
-    velocity = metrics.get('velocity', {})
-    file_risks = metrics.get('file_risks', {})
-    
-    # CRITICAL FLAGS (High severity)
-    if paste_percentage > 70 and total_chars > 500:
-        flags.append({
-            'severity': 'high',
-            'category': 'Code Origin',
-            'message': f'{paste_percentage:.0f}% of code ({work_patterns["large_pastes_count"]} large pastes) appeared in blocks rather than being typed gradually. This strongly suggests copied content.'
-        })
-    
-    if metrics['paste_burst_count'] > 5:
-        flags.append({
-            'severity': 'high',
-            'category': 'Paste Detection',
-            'message': f'{metrics["paste_burst_count"]} paste burst events detected - multiple large code blocks inserted within seconds of each other.'
-        })
-    
-    if active_time < 10 and total_chars > 500:
-        flags.append({
-            'severity': 'high',
-            'category': 'Time Analysis',
-            'message': f'Entire submission completed in {active_time:.1f} minutes with {total_chars} characters. This is suspiciously fast for genuine development.'
-        })
-    
-    # Velocity-based detection
-    if velocity.get('average_cpm', 0) > 150:
-        flags.append({
-            'severity': 'high',
-            'category': 'Typing Speed',
-            'message': f'Average typing speed of {velocity["average_cpm"]:.0f} chars/min is far beyond human coding speed (typical: 40-80 chars/min). This indicates pasting.'
-        })
-    
-    if len(velocity.get('suspicious_bursts', [])) > 3:
-        flags.append({
-            'severity': 'high',
-            'category': 'Velocity Bursts',
-            'message': f'{len(velocity["suspicious_bursts"])} time periods with >200 chars/min detected, indicating multiple paste operations.'
-        })
-    
-    # WARNING FLAGS (Medium severity)
-    if metrics['incremental_score'] < 0.4:
-        flags.append({
-            'severity': 'medium',
-            'category': 'Development Pattern',
-            'message': f'Code development shows sudden large insertions (score: {metrics["incremental_score"]:.2f}/1.0) rather than gradual, iterative work.'
-        })
-    
-    if metrics['typing_variance'] < 0.15:
-        flags.append({
-            'severity': 'medium',
-            'category': 'Typing Behavior',
-            'message': f'Typing patterns are unusually consistent (variance: {metrics["typing_variance"]:.2f}/1.0), suggesting automated insertion rather than manual coding.'
-        })
-    
-    if metrics['error_correction_ratio'] < 0.05 and total_chars > 200:
-        flags.append({
-            'severity': 'medium',
-            'category': 'Error Correction',
-            'message': f'Almost no deletions or corrections detected ({work_patterns["total_chars_deleted"]} chars deleted vs {total_chars} inserted). Real coding involves trial and error.'
-        })
-    
-    if metrics.get('session_consistency', 0) < 0.3:
-        flags.append({
-            'severity': 'medium',
-            'category': 'Work Sessions',
-            'message': f'Very few work sessions detected (consistency: {metrics.get("session_consistency", 0):.2f}/1.0). Authentic work typically shows 3+ separate coding sessions.'
-        })
-    
-    # File-specific warnings
-    high_risk_files = [f for f, data in file_risks.items() if data['risk'] == 'high']
-    if high_risk_files:
-        file_details = [f"{f}: {', '.join(file_risks[f]['issues'])}" for f in high_risk_files]
-        flags.append({
-            'severity': 'high',
-            'category': 'File Analysis',
-            'message': f'High-risk files detected: {"; ".join(file_details)}',
-            'files': high_risk_files
-        })
-    
-    # INFORMATIONAL FLAGS (Low severity)
-    if work_patterns.get('breaks_count', 0) == 0 and active_time > 60:
-        flags.append({
-            'severity': 'low',
-            'category': 'Work Pattern',
-            'message': f'No breaks detected during {active_time:.0f} minutes of coding. Consider if this is realistic for this student.'
-        })
-    
-    if paste_percentage > 30 and paste_percentage <= 70:
-        flags.append({
-            'severity': 'low',
-            'category': 'Code Origin',
-            'message': f'{paste_percentage:.0f}% of code came from large insertions. Some copying may be legitimate (e.g., templates, boilerplate).'
-        })
-    
-    medium_risk_files = [f for f, data in file_risks.items() if data['risk'] == 'medium']
-    if medium_risk_files:
-        flags.append({
-            'severity': 'low',
-            'category': 'File Analysis',
-            'message': f'Files with some concerns: {", ".join(medium_risk_files)}. Review recommended.',
-            'files': medium_risk_files
-        })
-    
-    # POSITIVE INDICATORS (None severity)
-    if not flags:
-        positive_indicators = []
-        
-        if metrics['incremental_score'] > 0.7:
-            positive_indicators.append('gradual code development')
-        if metrics['typing_variance'] > 0.3:
-            positive_indicators.append('natural typing patterns')
-        if metrics['error_correction_ratio'] > 0.15:
-            positive_indicators.append('appropriate trial and error')
-        if work_patterns.get('breaks_count', 0) > 0:
-            positive_indicators.append(f'{work_patterns["breaks_count"]} work breaks')
-        if metrics.get('session_consistency', 0) > 0.5:
-            positive_indicators.append('consistent work sessions')
-        
-        flags.append({
-            'severity': 'none',
-            'category': 'Assessment',
-            'message': f'No suspicious patterns detected. Positive indicators: {", ".join(positive_indicators)}. Work appears authentic.'
-        })
-    
-    return flags
 
 
 def calculate_all_metrics(events):
     """Calculate all metrics and generate comprehensive analysis"""
-    # Core metrics
+    # Core metrics (0-10 scale)
     metrics = {
         'incremental_score': incremental_score(events),
         'typing_variance': typing_variance(events),
@@ -512,7 +488,10 @@ def calculate_all_metrics(events):
     # Get detailed work pattern analysis
     work_patterns = analyze_work_patterns(events)
     
-    # Generate detailed flags
+    # Calculate overall score
+    metrics['overall_score'] = calculate_overall_score(metrics)
+    
+    # Generate top 3 flags only
     flags = generate_detailed_flags(metrics, events, work_patterns)
     
     return {

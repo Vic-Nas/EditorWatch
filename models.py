@@ -81,6 +81,7 @@ class AnalysisResult(db.Model):
     session_consistency = db.Column(db.Float)  # NEW
     velocity_avg = db.Column(db.Float)  # NEW
     velocity_max = db.Column(db.Float)  # NEW
+    overall_score = db.Column(db.Float)
     flags = db.Column(db.Text)  # JSON array of flag objects
     timeline_html = db.Column(db.Text)  # Plotly HTML visualization
     

@@ -291,8 +291,29 @@ def assignments():
             db.session.commit()
             logger.info(f"Created assignment {assignment_id}")
             
-            # Generate and send codes to students
+            # Handle students - SIMPLIFIED AUTO-LIST CREATION
             students = data.get('students', [])
+            
+            # If list_name provided, auto-create/save the list
+            list_name = data.get('list_name', '').strip()
+            if list_name and students:
+                # Check if list exists
+                existing_sheet = StudentSheet.query.filter_by(name=list_name).first()
+                if existing_sheet:
+                    # Update existing
+                    existing_sheet.students = json.dumps(students)
+                    existing_sheet.updated_at = datetime.utcnow()
+                    logger.info(f"Updated student list: {list_name}")
+                else:
+                    # Create new
+                    new_sheet = StudentSheet(
+                        name=list_name,
+                        students=json.dumps(students)
+                    )
+                    db.session.add(new_sheet)
+                    logger.info(f"Created student list: {list_name}")
+            
+            # Generate and send codes to students
             codes_sent = 0
             codes_failed = []
             
@@ -311,7 +332,7 @@ def assignments():
                     continue
                 
                 # Generate unique code
-                code = secrets.token_hex(3).upper()  # 6 character code
+                code = secrets.token_hex(3).upper()
                 
                 # Store code
                 student_code = StudentCode(
@@ -350,14 +371,29 @@ def assignments():
             logger.error(f"Error creating assignment: {e}", exc_info=True)
             return jsonify({'error': str(e)}), 500
     
+    # GET - return assignments with submission counts
     assignments = Assignment.query.all()
-    return jsonify([{
-        'assignment_id': a.assignment_id,
-        'course': a.course,
-        'name': a.name,
-        'deadline': a.deadline.isoformat(),
-        'created_at': a.created_at.isoformat()
-    } for a in assignments])
+    result = []
+    
+    for a in assignments:
+        # Count total students
+        total_students = StudentCode.query.filter_by(assignment_id=a.assignment_id).count()
+        
+        # Count submissions
+        submitted_count = Submission.query.filter_by(assignment_id=a.assignment_id).count()
+        
+        result.append({
+            'assignment_id': a.assignment_id,
+            'course': a.course,
+            'name': a.name,
+            'deadline': a.deadline.isoformat(),
+            'created_at': a.created_at.isoformat(),
+            'total_students': total_students,
+            'submitted_count': submitted_count,
+            'submission_rate': f"{submitted_count}/{total_students}"
+        })
+    
+    return jsonify(result)
 
 
 @app.route('/api/sheets', methods=['GET', 'POST'])
@@ -397,6 +433,56 @@ def sheets():
         'student_count': len(json.loads(s.students)),
         'created_at': s.created_at.isoformat()
     } for s in sheets])
+
+
+@app.route('/api/sheets/<int:sheet_id>', methods=['DELETE'])
+def delete_sheet(sheet_id):
+    """Delete a student sheet"""
+    if 'logged_in' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    sheet = StudentSheet.query.get_or_404(sheet_id)
+    db.session.delete(sheet)
+    db.session.commit()
+    logger.info(f"Deleted student sheet: {sheet.name}")
+    
+    return jsonify({'success': True, 'message': 'List deleted'})
+
+
+@app.route('/api/assignments/<assignment_id>/missing')
+def get_missing_submissions(assignment_id):
+    """Get list of students who haven't submitted"""
+    if 'logged_in' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    # Get all students
+    all_students = StudentCode.query.filter_by(assignment_id=assignment_id).all()
+    
+    # Get emails of students who submitted
+    submitted_emails = set(
+        s.email for s in Submission.query.filter_by(assignment_id=assignment_id).all()
+    )
+    
+    # Find missing
+    missing = []
+    for student in all_students:
+        if student.email not in submitted_emails:
+            name = student.email
+            if student.first_name:
+                name = f"{student.first_name} {student.last_name}".strip()
+            
+            missing.append({
+                'email': student.email,
+                'name': name,
+                'code': student.code
+            })
+    
+    return jsonify({
+        'total_students': len(all_students),
+        'submitted': len(submitted_emails),
+        'missing': missing,
+        'missing_count': len(missing)
+    })
 
 
 @app.route('/api/assignments/<assignment_id>/config')

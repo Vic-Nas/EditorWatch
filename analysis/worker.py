@@ -129,6 +129,8 @@ def analyze_submission(submission_id):
             analysis.session_consistency = result.get('session_consistency', 0)
             analysis.velocity_avg = result['velocity'].get('average_cpm', 0)
             analysis.velocity_max = result['velocity'].get('max_cpm', 0)
+            # Add overall score if present
+            analysis.overall_score = result.get('overall_score', 0)
             analysis.flags = json.dumps(result['flags'])
             analysis.timeline_html = combined_html
             # Store LLM exports in database
@@ -145,6 +147,8 @@ def analyze_submission(submission_id):
                 session_consistency=result.get('session_consistency', 0),
                 velocity_avg=result['velocity'].get('average_cpm', 0),
                 velocity_max=result['velocity'].get('max_cpm', 0),
+                # overall score
+                overall_score=result.get('overall_score', 0),
                 flags=json.dumps(result['flags']),
                 timeline_html=combined_html,
                 # Store LLM exports in database
