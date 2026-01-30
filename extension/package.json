@@ -2,7 +2,7 @@
   "name": "editorwatch",
   "displayName": "EditorWatch",
   "description": "Code process monitor for programming assignments - making cheating harder than learning",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "publisher": "vn-tf",
   "icon": "icon.png",
   "repository": {
@@ -28,11 +28,15 @@
       {
         "command": "editorwatch.disable",
         "title": "EditorWatch: Disable Monitoring"
+      },
+      {
+        "command": "editorwatch.status",
+        "title": "EditorWatch: Status"
       }
     ]
   },
   "dependencies": {
-    "better-sqlite3": "^9.2.2"
+    "sql.js": "^1.10.3"
   },
   "devDependencies": {
     "@types/vscode": "^1.85.0"

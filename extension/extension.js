@@ -1,11 +1,45 @@
 const vscode = require('vscode');
-const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
 const http = require('http');
 
 let db, currentAssignment, statusBarItem;
+let SQL;
+
+// Simple in-memory database using JSON
+class SimpleDB {
+    constructor() {
+        this.events = [];
+    }
+
+    prepare(query) {
+        return {
+            run: (...params) => {
+                if (query.includes('INSERT INTO events')) {
+                    this.events.push({
+                        id: this.events.length + 1,
+                        timestamp: params[0],
+                        type: params[1],
+                        file: params[2],
+                        char_count: params[3]
+                    });
+                }
+            },
+            all: () => {
+                return this.events;
+            }
+        };
+    }
+
+    exec(query) {
+        // No-op for CREATE TABLE
+    }
+
+    close() {
+        this.events = [];
+    }
+}
 
 function activate(context) {
     console.log('EditorWatch extension is now active!');
@@ -142,23 +176,10 @@ function showOptInPrompt(config, context) {
 function startMonitoring(config, context) {
     currentAssignment = config;
     
-    const workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
-    const dbPath = path.join(workspaceRoot, '.editorwatch.db');
-    
     try {
-        db = new Database(dbPath);
-        
-        db.exec(`
-            CREATE TABLE IF NOT EXISTS events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp INTEGER,
-                type TEXT,
-                file TEXT,
-                char_count INTEGER
-            )
-        `);
-        
-        console.log('EditorWatch: Database initialized at', dbPath);
+        // Use simple in-memory database
+        db = new SimpleDB();
+        console.log('EditorWatch: Database initialized');
     } catch (error) {
         vscode.window.showErrorMessage(`EditorWatch: Database error - ${error.message}`);
         return;
