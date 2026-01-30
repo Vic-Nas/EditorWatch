@@ -1,10 +1,26 @@
 import os
 import sys
+import json
+from cryptography.fernet import Fernet
+
+# Add parent directory to path to allow imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models import db, Submission, AnalysisResult
 from analysis.metrics import calculate_all_metrics
 from analysis.visualizer import create_timeline, create_activity_heatmap
-from app import app, decrypt_data
+
+# Initialize encryption (same as app.py but without importing app)
+ENCRYPTION_KEY = os.environ.get('ENCRYPTION_KEY', Fernet.generate_key())
+if isinstance(ENCRYPTION_KEY, str):
+    ENCRYPTION_KEY = ENCRYPTION_KEY.encode()
+cipher = Fernet(ENCRYPTION_KEY)
+
+
+def decrypt_data(encrypted_data):
+    """Decrypt data from storage (duplicated here to avoid circular import)"""
+    decrypted = cipher.decrypt(encrypted_data.encode())
+    return json.loads(decrypted.decode())
 
 
 def analyze_submission(submission_id):
@@ -12,6 +28,9 @@ def analyze_submission(submission_id):
     Background worker to analyze a submission.
     Called by RQ queue.
     """
+    # Import app here to get context, after other imports are done
+    from app import app
+    
     with app.app_context():
         submission = Submission.query.get(submission_id)
         if not submission:

@@ -70,6 +70,16 @@ def logout():
     return redirect(url_for('login'))
 
 
+@app.route('/init-db')
+def initialize_database():
+    """Initialize database tables (run once after first deploy)"""
+    try:
+        db.create_all()
+        return jsonify({'success': True, 'message': 'Database tables created successfully'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/submit', methods=['POST'])
 def submit_assignment():
     """Accept submission from VS Code extension"""
@@ -103,8 +113,8 @@ def submit_assignment():
         db.session.add(submission)
         db.session.commit()
         
-        # Queue analysis job
-        task_queue.enqueue('worker.analyze_submission', submission.id)
+        # Queue analysis job (FIXED: correct import path)
+        task_queue.enqueue('analysis.worker.analyze_submission', submission.id)
         
         return jsonify({
             'success': True,
@@ -230,6 +240,25 @@ def get_submission_detail(submission_id):
             'timeline_html': analysis.timeline_html
         } if analysis else None
     })
+
+
+@app.route('/submission/<int:submission_id>')
+def view_submission_detail(submission_id):
+    """View detailed submission page with timeline (NEW ROUTE)"""
+    if 'logged_in' not in session:
+        return redirect(url_for('login'))
+    
+    submission = Submission.query.get_or_404(submission_id)
+    analysis = AnalysisResult.query.filter_by(submission_id=submission_id).first()
+    
+    events = decrypt_data(submission.events_encrypted)
+    code = decrypt_data(submission.code_encrypted)
+    
+    return render_template('submission_detail.html',
+                         submission=submission,
+                         analysis=analysis,
+                         events=events,
+                         code=code)
 
 
 if __name__ == '__main__':
