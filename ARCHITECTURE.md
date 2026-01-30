@@ -1,5 +1,21 @@
 # EditorWatch Architecture
 
+## Philosophy: Simple by Design
+
+**The project is intentionally small.**
+
+Most academic integrity tools are bloated with features. EditorWatch focuses on one core insight: **the timeline of how code was written reveals everything.**
+
+**Total scope:**
+- Extension: ~150 lines JavaScript
+- Backend: ~500 lines Python  
+- Analysis: ~300 lines Python
+- **Total: ~1000 lines of code**
+
+The power isn't in complexity—it's in the idea. Events + timestamps = complete picture of student's process.
+
+---
+
 ## System Overview
 
 ```
@@ -105,53 +121,53 @@ Dashboard generates: homework3_starter.zip containing:
 
 Extension stores consent in local state:
 
-```typescript
-// extension_state.json (stored in extension's global storage)
+```javascript
+// Stored in VS Code's globalState (persists across sessions)
 {
   "accepted_assignments": {
     "cs101_hw3_a8f2b9": {
-      "accepted_at": "2024-02-01T10:30:00Z",
-      "workspace_path": "/home/student/homework3",
-      "monitoring_active": true
+      "accepted_at": 1706745000000,
+      "workspace": "/home/student/homework3"
     }
   }
 }
 ```
 
 **Behavior on subsequent VS Code opens:**
-```typescript
-async function onWorkspaceOpen() {
-  const editorwatchFile = findEditorwatchFile();
-  if (!editorwatchFile) return;
+```javascript
+function checkForAssignment(context) {
+  const editorwatchPath = findEditorwatchFile();
+  if (!editorwatchPath) return;
   
-  const config = JSON.parse(fs.readFileSync(editorwatchFile));
+  const config = JSON.parse(fs.readFileSync(editorwatchPath, 'utf8'));
   const assignmentId = config.assignment_id;
   
   // Check if already accepted
-  if (extensionState.hasAccepted(assignmentId)) {
+  const accepted = context.globalState.get('accepted_assignments', {});
+  if (accepted[assignmentId]) {
     // Silently resume monitoring - NO popup
-    startMonitoring(config);
+    startMonitoring(config, context);
     return;
   }
   
-  // Check if deadline passed (query server)
-  const isActive = await checkDeadlineActive(config.server, assignmentId);
-  if (!isActive) {
+  // Check if deadline passed (works offline)
+  const deadline = new Date(config.deadline);
+  if (new Date() > deadline) {
     // Deadline passed - don't even show popup
     return;
   }
   
   // First time seeing this assignment - show opt-in popup
-  showOptInNotification(config);
+  showOptInPrompt(config, context);
 }
 ```
 
 **Rules:**
 - ✅ Show popup ONCE per assignment (first detection)
 - ✅ Never show popup again after opt-in
-- ✅ Never show popup if deadline passed
+- ✅ Never show popup if deadline passed (checked offline from .editorwatch)
 - ✅ Silently resume monitoring on subsequent opens
-- ✅ If student clicks "Not Now", remember that too (don't re-ask until next session)
+- ✅ If student clicks "Not Now", don't ask again until next VS Code restart
 
 ### Deadline Validation (Server-side)
 
@@ -173,27 +189,169 @@ def check_assignment_active(assignment_id):
     })
 ```
 
-**Extension checks this endpoint:**
-- On first detection (before showing popup)
-- When resuming monitoring (to stop if deadline passed)
-- Before allowing submission (reject if too late)
+**But this is optional.** Extension works offline-first.
 
-**Result:** Past-deadline assignments are invisible to extension.
+---
+
+## Offline-First Design
+
+**Students shouldn't need internet to code.**
+
+### What Works Offline (Everything Important)
+
+✅ Opening assignment folder (reads `.editorwatch` from disk)  
+✅ Logging events (writes to local SQLite)  
+✅ Saving code (normal VS Code)  
+✅ Continuing work (uses local state)  
+✅ Deadline checking (reads from `.editorwatch`)
+
+### What Requires Internet (Only Submission)
+
+❌ Submitting to server (obviously)  
+❌ Server deadline validation (optional verification)
+
+### Offline Workflow Example
+
+```
+Student with no internet all week:
+
+Monday (at library with WiFi):
+1. Download homework3_starter.zip
+2. Extract, contains .editorwatch with deadline
+
+Tuesday-Friday (at home, no internet):
+3. Open folder in VS Code
+4. Extension reads .editorwatch (offline)
+5. Checks deadline from file (offline)
+6. Shows opt-in popup (offline)
+7. Student works all week
+8. All events logged to local SQLite (offline)
+
+Saturday (coffee shop with WiFi):
+9. Click "Submit"
+10. Extension uploads to server
+11. Done
+```
+
+**Total internet requirement: 0 during work, only for final upload.**
+
+### How Deadline Check Works Offline
+
+Extension reads deadline directly from `.editorwatch`:
+
+```javascript
+function isDeadlinePassed(config) {
+  const deadline = new Date(config.deadline);
+  const now = new Date();
+  return now > deadline;  // Works 100% offline
+}
+```
+
+No server call needed. Student has deadline in their local file.
+
+### Offline Submission Queue
+
+If student tries to submit while offline:
+
+```javascript
+async function submitAssignment(context) {
+  try {
+    await uploadToServer(submission);
+    vscode.window.showInformationMessage('✅ Submitted');
+  } catch (error) {
+    // Offline - queue for later
+    const pending = context.globalState.get('pending_submissions', []);
+    pending.push(submission);
+    context.globalState.update('pending_submissions', pending);
+    
+    vscode.window.showInformationMessage('📡 Offline - queued for submission');
+  }
+}
+
+// Auto-sync when internet returns
+setInterval(() => syncPendingSubmissions(), 60000);
+```
+
+Student can "submit" offline, extension auto-uploads when connected.
+
+---
+
+## Security Philosophy: Data Over Trust
+
+**We don't prevent tampering. We detect it.**
+
+Students can modify `.editorwatch`, exclude files, or edit deadlines locally. None of this helps them cheat—the timeline reveals everything.
+
+### What Student Can't Fake
+
+❌ Server deadline (server validates on submission)  
+❌ Assignment ID (must match server database)  
+❌ Timeline patterns (analysis detects inconsistencies)  
+❌ Code-to-events ratio (500 lines with 10 events = red flag)
+
+### What Student Can Fake (But Doesn't Help)
+
+✅ Local deadline → Server rejects late submission anyway  
+✅ Track patterns → Missing events for code files = instant red flag  
+✅ Assignment name → Cosmetic only  
+✅ Server URL → Can't submit to wrong server
+
+### Why Encryption Would Be Pointless
+
+If we encrypted `.editorwatch`:
+1. Extension needs key to decrypt → Key in extension code
+2. Extension code is JavaScript → Students can read it
+3. Students extract key → Can decrypt and re-encrypt
+4. **We gained nothing** → Same vulnerability, more complexity
+
+**Security theater without actual security.**
+
+### The Real Defense
+
+**Server is source of truth:**
+- Deadline validated server-side
+- Assignment ID validated server-side  
+- Timeline analyzed for patterns
+- Instructor reviews final data
+
+**Student modifications are visible:**
+- Extended work past deadline → Timeline shows it
+- Excluded files → Code exists with no events
+- Spaced-out fake edits → Paste bursts remain visible
+
+**The disruption in the data IS the evidence.**
+
+### Message to Students
+
+Include in `.editorwatch` file:
+
+```json
+{
+  "_comment": "Modifying this file won't help you cheat. The server validates everything. But you might break your workflow. Modify at your own risk.",
+  "assignment_id": "cs101_hw3_a8f2b9",
+  "deadline": "2024-02-15T23:59:59Z",
+  ...
+}
+```
+
+---
+
+## Deadline Validation (Server-side - Removed)
 
 ---
 
 ## Tech Stack (Minimal & Python-First)
 
-### Extension (TypeScript)
+### Extension (Plain JavaScript)
 ```
-Language: TypeScript
+Language: JavaScript (no TypeScript needed)
 Framework: VS Code Extension API
 Storage: SQLite (better-sqlite3)
-HTTP: fetch/axios
-Build: esbuild
+HTTP: fetch (built-in)
+Build: None (runs directly)
 ```
 
-**Why TypeScript?** VS Code extensions require it. But the code is simple—mostly event listeners and database writes.
+**Why JavaScript?** VS Code extensions can use plain JS. No compilation needed. ~150 lines total.
 
 ### Backend (Python)
 ```
@@ -240,58 +398,235 @@ State: React hooks (no Redux complexity)
 ```
 extension/
 ├── package.json          # Extension manifest
-├── src/
-│   ├── extension.ts      # Main entry point
-│   ├── logger.ts         # Event capture logic
-│   ├── storage.ts        # SQLite operations
-│   └── submitter.ts      # Upload to server
-└── database/
-    └── schema.sql        # SQLite schema
+├── extension.js          # Main entry point (~150 lines)
+└── .vscodeignore         # Files to exclude from package
 ```
 
 **Core Logic:**
 
-```typescript
-// Event types to capture
-type EditorEvent = {
-  timestamp: number;
-  type: 'insert' | 'delete' | 'save' | 'focus_change';
-  file: string;
-  line_start: number;
-  line_end: number;
-  char_count: number;
-  typing_speed?: number;  // chars/sec over last 10s
-};
+```javascript
+// extension.js - Complete extension in ~150 lines
 
-// Capture on text change
-vscode.workspace.onDidChangeTextDocument((event) => {
-  const change = event.contentChanges[0];
-  logEvent({
-    timestamp: Date.now(),
-    type: change.text ? 'insert' : 'delete',
-    file: event.document.fileName,
-    char_count: Math.abs(change.text.length || change.rangeLength),
-    // ... calculate typing speed
-  });
-});
+const vscode = require('vscode');
+const fs = require('fs');
+const path = require('path');
+const Database = require('better-sqlite3');
 
-// Submit when student clicks "Submit Analytics"
-async function submitToServer() {
-  const events = await getLocalEvents();
-  const finalCode = await getFinalCodeSnapshot();
-  
-  await fetch('https://your-server.com/api/submit', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${studentToken}` },
-    body: JSON.stringify({
-      student_id: '...',
-      assignment_id: '...',
-      events: events,
-      final_code: finalCode
-    })
-  });
+let db;
+let currentAssignment = null;
+let statusBarItem;
+
+// 1. Extension activation
+function activate(context) {
+    console.log('EditorWatch activated');
+    
+    // Check for assignment on startup
+    checkForAssignment(context);
+    
+    // Listen to text changes
+    vscode.workspace.onDidChangeTextDocument(event => {
+        if (currentAssignment) {
+            logEvent(event);
+        }
+    });
+    
+    // Register submit command
+    const submitCmd = vscode.commands.registerCommand(
+        'editorwatch.submit',
+        () => submitAssignment(context)
+    );
+    
+    context.subscriptions.push(submitCmd);
 }
+
+// 2. Check for .editorwatch file
+function checkForAssignment(context) {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) return;
+    
+    const editorwatchPath = path.join(
+        workspaceFolder.uri.fsPath,
+        '.editorwatch'
+    );
+    
+    if (!fs.existsSync(editorwatchPath)) return;
+    
+    const config = JSON.parse(fs.readFileSync(editorwatchPath, 'utf8'));
+    
+    // Check if already accepted
+    const accepted = context.globalState.get('accepted_assignments', {});
+    
+    if (accepted[config.assignment_id]) {
+        // Already accepted - start silently
+        startMonitoring(config, context);
+        return;
+    }
+    
+    // Check if deadline passed (offline-first)
+    const deadline = new Date(config.deadline);
+    if (new Date() > deadline) {
+        // Deadline passed - don't show popup
+        return;
+    }
+    
+    // First time - show opt-in
+    showOptInPrompt(config, context);
+}
+
+// 3. Show one-time opt-in popup
+function showOptInPrompt(config, context) {
+    vscode.window.showInformationMessage(
+        `📊 EditorWatch - ${config.name}\nDeadline: ${config.deadline}\nEnable monitoring?`,
+        'Enable',
+        'Not Now'
+    ).then(choice => {
+        if (choice === 'Enable') {
+            // Save acceptance
+            const accepted = context.globalState.get('accepted_assignments', {});
+            accepted[config.assignment_id] = {
+                accepted_at: Date.now(),
+                workspace: vscode.workspace.workspaceFolders[0].uri.fsPath
+            };
+            context.globalState.update('accepted_assignments', accepted);
+            
+            startMonitoring(config, context);
+        }
+    });
+}
+
+// 4. Start monitoring
+function startMonitoring(config, context) {
+    currentAssignment = config;
+    
+    // Initialize SQLite database
+    const dbPath = path.join(
+        context.globalStorageUri.fsPath,
+        `${config.assignment_id}.db`
+    );
+    
+    // Ensure directory exists
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    
+    db = new Database(dbPath);
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp INTEGER NOT NULL,
+            type TEXT NOT NULL,
+            file TEXT NOT NULL,
+            char_count INTEGER NOT NULL
+        )
+    `);
+    
+    // Create status bar item
+    statusBarItem = vscode.window.createStatusBarItem(
+        vscode.StatusBarAlignment.Right,
+        100
+    );
+    
+    const eventCount = db.prepare('SELECT COUNT(*) as count FROM events').get().count;
+    statusBarItem.text = `📊 ${config.assignment_id.split('_')[0]} (${eventCount})`;
+    statusBarItem.command = 'editorwatch.submit';
+    statusBarItem.show();
+}
+
+// 5. Log events
+function logEvent(event) {
+    if (!db || !currentAssignment) return;
+    
+    const change = event.contentChanges[0];
+    if (!change) return;
+    
+    // Only track files matching patterns
+    const fileName = event.document.fileName;
+    const patterns = currentAssignment.track_patterns || ['*.py'];
+    
+    const matches = patterns.some(pattern => {
+        const regex = new RegExp(pattern.replace('*', '.*'));
+        return regex.test(fileName);
+    });
+    
+    if (!matches) return;
+    
+    db.prepare(`
+        INSERT INTO events (timestamp, type, file, char_count)
+        VALUES (?, ?, ?, ?)
+    `).run(
+        Date.now(),
+        change.text ? 'insert' : 'delete',
+        fileName,
+        Math.abs(change.text?.length || change.rangeLength || 0)
+    );
+    
+    // Update status bar count
+    const count = db.prepare('SELECT COUNT(*) as count FROM events').get().count;
+    statusBarItem.text = `📊 ${currentAssignment.assignment_id.split('_')[0]} (${count})`;
+}
+
+// 6. Submit assignment
+async function submitAssignment(context) {
+    if (!currentAssignment || !db) {
+        vscode.window.showErrorMessage('No active assignment');
+        return;
+    }
+    
+    // Get all events
+    const events = db.prepare('SELECT * FROM events ORDER BY timestamp').all();
+    
+    // Get final code files
+    const files = await vscode.workspace.findFiles(
+        `{${currentAssignment.track_patterns.join(',')}}`
+    );
+    
+    const code = {};
+    for (const file of files) {
+        const content = await vscode.workspace.fs.readFile(file);
+        code[file.fsPath] = content.toString();
+    }
+    
+    // Prepare submission
+    const submission = {
+        assignment_id: currentAssignment.assignment_id,
+        events: events,
+        code: code,
+        submitted_at: Date.now()
+    };
+    
+    // Try to upload
+    try {
+        const response = await fetch(`${currentAssignment.server}/api/submit`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(submission)
+        });
+        
+        if (response.ok) {
+            vscode.window.showInformationMessage('✅ Submitted successfully');
+            
+            // Clear events after successful submission
+            db.exec('DELETE FROM events');
+            statusBarItem.text = `📊 ${currentAssignment.assignment_id.split('_')[0]} (0)`;
+        } else {
+            const error = await response.text();
+            vscode.window.showErrorMessage(`Submission failed: ${error}`);
+        }
+    } catch (error) {
+        // Offline - queue for later
+        vscode.window.showWarningMessage('📡 Offline - submission queued');
+        
+        // Save to pending submissions
+        const pending = context.globalState.get('pending_submissions', []);
+        pending.push(submission);
+        context.globalState.update('pending_submissions', pending);
+    }
+}
+
+module.exports = { activate };
 ```
+
+**That's the entire extension. ~150 lines of simple JavaScript.**
 
 **Privacy Design:**
 - Only logs editor events in assignment workspace
@@ -1042,31 +1377,41 @@ Entire system is open source:
 
 ## Implementation Roadmap
 
-### MVP (4 weeks)
-- [ ] Extension: Basic event logging to SQLite
-- [ ] Extension: Manual CSV export
-- [ ] Backend: Accept CSV uploads
-- [ ] Analysis: Calculate 3 core metrics
-- [ ] Dashboard: Simple table view
+**The project is intentionally small.** The power is in the idea, not code complexity.
 
-### Beta (8 weeks from start)
-- [ ] Extension: Automatic upload to server
-- [ ] Backend: User authentication
-- [ ] Analysis: Full metric suite + visualizations
-- [ ] Dashboard: Interactive charts
-- [ ] Deploy to test server
+**Total code:**
+- Extension: ~150 lines JavaScript
+- Backend: ~500 lines Python
+- Analysis: ~300 lines Python
+- **Total: ~1000 lines**
 
-### V1 (16 weeks from start)
-- [ ] LLM integration
+### MVP (2 weeks)
+- [ ] Extension: Event logging to SQLite (~100 lines)
+- [ ] Extension: Manual CSV export (~20 lines)
+- [ ] Backend: Flask API skeleton (~50 lines)
+- [ ] Backend: Accept submissions (~100 lines)
+
+### Beta (4 weeks from start)
+- [ ] Extension: Auto-submit to server (~30 lines)
+- [ ] Backend: User authentication (~100 lines)
+- [ ] Analysis: Core metrics (incremental, typing, paste detection) (~200 lines)
+- [ ] Dashboard: Simple HTML table view (~50 lines)
+
+### V1 (8 weeks from start)
+- [ ] Analysis: Visualizations with Plotly (~100 lines)
+- [ ] Dashboard: Interactive charts (~100 lines)
+- [ ] LLM integration (optional) (~50 lines)
+- [ ] Deploy to Railway
+
+### Polish (10 weeks from start)
+- [ ] Offline queue for submissions
+- [ ] Better error handling
 - [ ] Instructor training materials
-- [ ] Pilot with 1-2 courses
-- [ ] Gather feedback, iterate
+- [ ] Documentation
 
-### V2 (24 weeks from start)
-- [ ] Team project features
-- [ ] Multi-language support
-- [ ] Public release
-- [ ] Research paper
+**Total: ~2.5 months for production-ready system**
+
+The simplicity is intentional. Most "academic integrity" tools are bloated. This focuses on the core insight: **timeline reveals everything.**
 
 ---
 
