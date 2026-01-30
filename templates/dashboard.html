@@ -201,146 +201,153 @@ alice@uni.edu,Alice,Johnson"></textarea>
     </div>
     
     <script>
-        let currentTab = 'manual';
-        let csvData = null;
-        let sheets = [];
+        var currentTab = 'manual';
+        var csvData = null;
+        var sheets = [];
         
         function switchTab(tab) {
             currentTab = tab;
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-            document.querySelector(\`.tab[onclick*="\${tab}"]\`).classList.add('active');
-            document.getElementById(\`tab-\${tab}\`).classList.add('active');
+            var tabs = document.querySelectorAll('.tab');
+            var contents = document.querySelectorAll('.tab-content');
+            
+            tabs.forEach(function(t) { t.classList.remove('active'); });
+            contents.forEach(function(t) { t.classList.remove('active'); });
+            
+            var activeTab = Array.from(tabs).find(function(t) { 
+                return t.getAttribute('onclick').indexOf(tab) > -1; 
+            });
+            if (activeTab) activeTab.classList.add('active');
+            
+            var activeContent = document.getElementById('tab-' + tab);
+            if (activeContent) activeContent.classList.add('active');
         }
         
-        async function loadSheets() {
-            try {
-                const response = await fetch('/api/sheets');
-                sheets = await response.json();
-                const select = document.getElementById('sheet-select');
-                select.innerHTML = '<option value="">Select saved list...</option>' +
-                    sheets.map(s => \`<option value="\${s.id}">\${s.name} (\${s.student_count} students)</option>\`).join('');
-            } catch (e) {
-                console.error('Failed to load sheets:', e);
-            }
+        function loadSheets() {
+            fetch('/api/sheets')
+                .then(function(response) { return response.json(); })
+                .then(function(data) {
+                    sheets = data;
+                    var select = document.getElementById('sheet-select');
+                    select.innerHTML = '<option value="">Select saved list...</option>' +
+                        sheets.map(function(s) { 
+                            return '<option value="' + s.id + '">' + s.name + ' (' + s.student_count + ' students)</option>'; 
+                        }).join('');
+                })
+                .catch(function(e) {
+                    console.error('Failed to load sheets:', e);
+                });
         }
         
         function handleCSV(event) {
-            const file = event.target.files[0];
+            var file = event.target.files[0];
             if (!file) return;
             
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                const text = e.target.result;
-                const lines = text.split('\\n').map(l => l.trim()).filter(l => l);
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                var text = e.target.result;
+                var lines = text.split('\n').map(function(l) { return l.trim(); }).filter(function(l) { return l; });
                 
-                csvData = lines.slice(1).map(line => {
-                    const [email, first_name, last_name] = line.split(',').map(s => s.trim());
-                    return { email, first_name, last_name };
-                }).filter(s => s.email);
+                csvData = lines.slice(1).map(function(line) {
+                    var parts = line.split(',').map(function(s) { return s.trim(); });
+                    return { 
+                        email: parts[0], 
+                        first_name: parts[1], 
+                        last_name: parts[2] 
+                    };
+                }).filter(function(s) { return s.email; });
                 
                 document.getElementById('csv-preview').innerHTML = 
-                    \`<div class="success-box">✅ Loaded \${csvData.length} students</div>\`;
+                    '<div class="success-box">✅ Loaded ' + csvData.length + ' students</div>';
             };
             reader.readAsText(file);
         }
         
         function parseStudents() {
             if (currentTab === 'manual') {
-                const text = document.getElementById('students-manual').value;
-                const lines = text.split('\\n').map(l => l.trim()).filter(l => l);
-                const start = lines[0] && lines[0].toLowerCase().includes('email') ? 1 : 0;
+                var text = document.getElementById('students-manual').value;
+                var lines = text.split('\n').map(function(l) { return l.trim(); }).filter(function(l) { return l; });
+                var start = lines[0] && lines[0].toLowerCase().indexOf('email') > -1 ? 1 : 0;
                 
-                return lines.slice(start).map(line => {
-                    const parts = line.split(',').map(s => s.trim());
+                return lines.slice(start).map(function(line) {
+                    var parts = line.split(',').map(function(s) { return s.trim(); });
                     if (parts.length >= 3) {
-                        return { email: parts[0], first_name: parts[1], last_name: parts[2] };
+                        return { 
+                            email: parts[0], 
+                            first_name: parts[1], 
+                            last_name: parts[2] 
+                        };
                     }
                     return null;
-                }).filter(s => s && s.email);
+                }).filter(function(s) { return s && s.email; });
             } else if (currentTab === 'csv') {
                 return csvData || [];
             } else if (currentTab === 'sheet') {
-                const sheetId = document.getElementById('sheet-select').value;
+                var sheetId = document.getElementById('sheet-select').value;
                 if (!sheetId) return [];
-                const sheet = sheets.find(s => s.id == sheetId);
+                var sheet = sheets.find(function(s) { return s.id == sheetId; });
                 return sheet ? JSON.parse(sheet.students) : [];
             }
             return [];
         }
         
-        async function loadAssignments() {
-            const response = await fetch('/api/assignments');
-            const assignments = await response.json();
-            
-            const html = assignments.length ? \`
-                <table>
-                    <tr>
-                        <th>Course</th>
-                        <th>Assignment</th>
-                        <th>Deadline</th>
-                        <th>Actions</th>
-                    </tr>
-                    \${assignments.map(a => \`
-                        <tr>
-                            <td>\${a.course}</td>
-                            <td>\${a.name}</td>
-                            <td>\${new Date(a.deadline).toLocaleString()}</td>
-                            <td>
-                                <a href="/api/assignments/\${a.assignment_id}/config" class="btn btn-small btn-secondary" download>⬇ Config</a>
-                                <button class="btn btn-small" onclick="viewSubmissions('\${a.assignment_id}')">View</button>
-                                <button class="btn btn-small btn-danger" onclick="deleteAssignment('\${a.assignment_id}')">Delete</button>
-                            </td>
-                        </tr>
-                    \`).join('')}
-                </table>
-            \` : '<p style="margin-top: 20px;">No assignments yet.</p>';
-            
-            document.getElementById('assignments-list').innerHTML = html;
+        function loadAssignments() {
+            fetch('/api/assignments')
+                .then(function(response) { return response.json(); })
+                .then(function(assignments) {
+                    var html = assignments.length ? 
+                        '<table><tr><th>Course</th><th>Assignment</th><th>Deadline</th><th>Actions</th></tr>' +
+                        assignments.map(function(a) {
+                            return '<tr>' +
+                                '<td>' + a.course + '</td>' +
+                                '<td>' + a.name + '</td>' +
+                                '<td>' + new Date(a.deadline).toLocaleString() + '</td>' +
+                                '<td>' +
+                                '<a href="/api/assignments/' + a.assignment_id + '/config" class="btn btn-small btn-secondary" download>⬇ Config</a> ' +
+                                '<button class="btn btn-small" onclick="viewSubmissions(\'' + a.assignment_id + '\')">View</button> ' +
+                                '<button class="btn btn-small btn-danger" onclick="deleteAssignment(\'' + a.assignment_id + '\')">Delete</button>' +
+                                '</td></tr>';
+                        }).join('') + '</table>'
+                        : '<p style="margin-top: 20px;">No assignments yet.</p>';
+                    
+                    document.getElementById('assignments-list').innerHTML = html;
+                })
+                .catch(function(e) {
+                    console.error('Error loading assignments:', e);
+                    document.getElementById('assignments-list').innerHTML = '<p style="color: red;">Error loading assignments</p>';
+                });
         }
         
-        async function viewSubmissions(assignmentId) {
-            const response = await fetch(\`/api/assignments/\${assignmentId}/submissions\`);
-            const submissions = await response.json();
-            
-            const submissionsSection = document.getElementById('submissions-section');
-            submissionsSection.style.display = 'block';
-            
-            const statusDisplay = (status) => {
-                const labels = {
-                    'clean': '🟢 Clean',
-                    'warning': '🟡 Review',
-                    'suspicious': '🔴 Suspicious',
-                    'pending': '⏳ Pending'
-                };
-                return \`<span class="status-\${status}">\${labels[status] || status}</span>\`;
-            };
-            
-            const html = submissions.length ? \`
-                <h3>Assignment: \${assignmentId}</h3>
-                <p>\${submissions.length} submission(s)</p>
-                <table>
-                    <tr>
-                        <th>Student</th>
-                        <th>Submitted</th>
-                        <th>Status</th>
-                        <th>Actions</th>
-                    </tr>
-                    \${submissions.map(s => \`
-                        <tr>
-                            <td>\${s.student_name || s.email}</td>
-                            <td>\${new Date(s.submitted_at).toLocaleString()}</td>
-                            <td>\${statusDisplay(s.status)}</td>
-                            <td>
-                                <a href="/submission/\${s.id}" class="btn btn-small">Detail</a>
-                            </td>
-                        </tr>
-                    \`).join('')}
-                </table>
-            \` : '<p>No submissions yet.</p>';
-            
-            document.getElementById('submissions-list').innerHTML = html;
-            submissionsSection.scrollIntoView({ behavior: 'smooth' });
+        function viewSubmissions(assignmentId) {
+            fetch('/api/assignments/' + assignmentId + '/submissions')
+                .then(function(response) { return response.json(); })
+                .then(function(submissions) {
+                    var submissionsSection = document.getElementById('submissions-section');
+                    submissionsSection.style.display = 'block';
+                    
+                    var statusLabels = {
+                        'clean': '🟢 Clean',
+                        'warning': '🟡 Review',
+                        'suspicious': '🔴 Suspicious',
+                        'pending': '⏳ Pending'
+                    };
+                    
+                    var html = submissions.length ? 
+                        '<h3>Assignment: ' + assignmentId + '</h3>' +
+                        '<p>' + submissions.length + ' submission(s)</p>' +
+                        '<table><tr><th>Student</th><th>Submitted</th><th>Status</th><th>Actions</th></tr>' +
+                        submissions.map(function(s) {
+                            return '<tr>' +
+                                '<td>' + (s.student_name || s.email) + '</td>' +
+                                '<td>' + new Date(s.submitted_at).toLocaleString() + '</td>' +
+                                '<td><span class="status-' + s.status + '">' + (statusLabels[s.status] || s.status) + '</span></td>' +
+                                '<td><a href="/submission/' + s.id + '" class="btn btn-small">Detail</a></td>' +
+                                '</tr>';
+                        }).join('') + '</table>'
+                        : '<p>No submissions yet.</p>';
+                    
+                    document.getElementById('submissions-list').innerHTML = html;
+                    submissionsSection.scrollIntoView({ behavior: 'smooth' });
+                });
         }
         
         function showCreateModal() {
@@ -354,18 +361,21 @@ alice@uni.edu,Alice,Johnson"></textarea>
             document.getElementById('createForm').reset();
         }
         
-        async function createAssignment(event) {
+        function createAssignment(event) {
             event.preventDefault();
             
-            const students = parseStudents();
+            var students = parseStudents();
             if (students.length === 0) {
                 alert('Please enter at least one student');
                 return;
             }
             
-            const patterns = document.getElementById('track_patterns').value.split(',').map(s => s.trim()).filter(s => s);
+            var patterns = document.getElementById('track_patterns').value
+                .split(',')
+                .map(function(s) { return s.trim(); })
+                .filter(function(s) { return s; });
             
-            const data = {
+            var data = {
                 name: document.getElementById('name').value,
                 course: document.getElementById('course').value,
                 deadline: document.getElementById('deadline').value,
@@ -373,61 +383,70 @@ alice@uni.edu,Alice,Johnson"></textarea>
                 students: students
             };
             
-            const response = await fetch('/api/assignments', {
+            fetch('/api/assignments', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(data)
-            });
-            
-            if (response.ok) {
-                const result = await response.json();
-                const successMsg = document.getElementById('success-message');
+            })
+            .then(function(response) { return response.json(); })
+            .then(function(result) {
+                var successMsg = document.getElementById('success-message');
                 
-                let message = \`<div class="success-box">
-                    <strong>✅ Assignment created!</strong><br>
-                    <p>Codes sent to \${result.codes_sent} student(s)</p>\`;
+                var message = '<div class="success-box">' +
+                    '<strong>✅ Assignment created!</strong><br>' +
+                    '<p>Codes sent to ' + result.codes_sent + ' student(s)</p>';
                 
                 if (!result.smtp_enabled) {
-                    message += \`<div class="warning-box" style="margin-top: 10px;">
-                        <strong>⚠️ SMTP not configured</strong><br>
-                        Codes generated but not emailed.
-                    </div>\`;
+                    message += '<div class="warning-box" style="margin-top: 10px;">' +
+                        '<strong>⚠️ SMTP not configured</strong><br>' +
+                        'Codes generated but not emailed.' +
+                        '</div>';
                 }
                 
                 if (result.codes_failed && result.codes_failed.length > 0) {
-                    message += \`<div class="warning-box" style="margin-top: 10px;">
-                        <strong>Failed emails:</strong><br>
-                        \${result.codes_failed.map(f => \`\${f.first_name} \${f.last_name} (\${f.email}): <code>\${f.code}</code>\`).join('<br>')}
-                    </div>\`;
+                    message += '<div class="warning-box" style="margin-top: 10px;">' +
+                        '<strong>Failed emails:</strong><br>' +
+                        result.codes_failed.map(function(f) { 
+                            return f.first_name + ' ' + f.last_name + ' (' + f.email + '): <code>' + f.code + '</code>'; 
+                        }).join('<br>') +
+                        '</div>';
                 }
                 
-                message += \`<a href="\${result.config_url}" class="btn btn-secondary" download style="margin-top: 10px;">
-                    📥 Download Config
-                </a></div>\`;
+                message += '<a href="' + result.config_url + '" class="btn btn-secondary" download style="margin-top: 10px;">' +
+                    '📥 Download Config' +
+                    '</a></div>';
                 
                 successMsg.innerHTML = message;
                 successMsg.style.display = 'block';
                 
                 loadAssignments();
                 document.getElementById('createForm').reset();
-            } else {
+            })
+            .catch(function(e) {
                 alert('Error creating assignment');
-            }
+                console.error(e);
+            });
         }
         
-        async function deleteAssignment(assignmentId) {
+        function deleteAssignment(assignmentId) {
             if (!confirm('Delete this assignment? All data will be lost!')) return;
             
-            const response = await fetch(\`/api/assignments/\${assignmentId}\`, {
+            fetch('/api/assignments/' + assignmentId, {
                 method: 'DELETE'
+            })
+            .then(function(response) {
+                if (response.ok) {
+                    loadAssignments();
+                    document.getElementById('submissions-section').style.display = 'none';
+                }
             });
-            
-            if (response.ok) {
-                loadAssignments();
-                document.getElementById('submissions-section').style.display = 'none';
-            }
         }
         
+        function showSheetManager() {
+            alert('Sheet manager coming soon! For now, use the API directly.');
+        }
+        
+        // Load assignments on page load
         loadAssignments();
     </script>
 </body>
