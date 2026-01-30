@@ -404,12 +404,20 @@ def download_config(assignment_id):
     """Download .editorwatch config file for an assignment"""
     assignment = Assignment.query.filter_by(assignment_id=assignment_id).first_or_404()
     
-    # Get server URL - force HTTPS if from Railway
+    # Get server URL - force HTTPS for production
     server_url = os.environ.get('SERVER_URL')
     if not server_url:
-        # Build from request, ensuring HTTPS
-        scheme = 'https' if request.headers.get('X-Forwarded-Proto') == 'https' else request.scheme
+        # Build from request
+        # Railway sets X-Forwarded-Proto header, always use it if present
+        if request.headers.get('X-Forwarded-Proto'):
+            scheme = 'https'
+        else:
+            scheme = request.scheme
         server_url = f"{scheme}://{request.host}"
+    
+    # Ensure HTTPS for production
+    if 'railway.app' in server_url and server_url.startswith('http://'):
+        server_url = server_url.replace('http://', 'https://', 1)
     
     config = {
         'assignment_id': assignment.assignment_id,
@@ -420,11 +428,12 @@ def download_config(assignment_id):
         'track_patterns': json.loads(assignment.track_patterns)
     }
     
+    # Use .editorwatch as filename (note the leading dot)
     return Response(
         json.dumps(config, indent=2),
         mimetype='application/json',
         headers={
-            'Content-Disposition': f'attachment; filename={assignment_id}.editorwatch'
+            'Content-Disposition': 'attachment; filename=".editorwatch"'
         }
     )
 
