@@ -111,9 +111,6 @@
             white-space: pre-wrap;
             word-wrap: break-word;
         }
-        .visualizations {
-            margin-top: 30px;
-        }
         .back-btn {
             display: inline-block;
             padding: 10px 20px;
@@ -121,7 +118,6 @@
             color: white;
             text-decoration: none;
             border-radius: 5px;
-            margin-bottom: 20px;
         }
         .back-btn:hover {
             background: #5568d3;
@@ -157,8 +153,10 @@
         <div class="section">
             <h2>Submission Information</h2>
             <div class="info-grid">
-                <div class="label">Student ID:</div>
-                <div>{{ submission.student_id }}</div>
+                {% for key, value in student_info.items() %}
+                <div class="label">{{ key|capitalize }}:</div>
+                <div>{{ value }}</div>
+                {% endfor %}
                 
                 <div class="label">Assignment:</div>
                 <div>{{ submission.assignment_id }}</div>
@@ -242,7 +240,7 @@
             </div>
         </div>
 
-        <!-- Raw Events (for debugging) -->
+        <!-- Raw Events -->
         <div class="section">
             <h2>Event Log Summary</h2>
             <p><strong>Total events:</strong> {{ events|length }}</p>

@@ -59,9 +59,16 @@
         .btn:hover {
             background: #5568d3;
         }
+        .btn-secondary {
+            background: #48bb78;
+        }
+        .btn-secondary:hover {
+            background: #38a169;
+        }
         table {
             width: 100%;
             border-collapse: collapse;
+            margin-top: 20px;
         }
         th, td {
             padding: 12px;
@@ -83,6 +90,7 @@
             background: rgba(0,0,0,0.5);
             justify-content: center;
             align-items: center;
+            z-index: 1000;
         }
         .modal-content {
             background: white;
@@ -91,7 +99,7 @@
             max-width: 500px;
             width: 90%;
         }
-        .modal input {
+        .modal input, .modal select {
             width: 100%;
             padding: 10px;
             margin: 10px 0;
@@ -104,6 +112,42 @@
             font-size: 24px;
             color: #999;
         }
+        .field-builder {
+            margin: 15px 0;
+        }
+        .field-item {
+            display: flex;
+            gap: 10px;
+            margin: 5px 0;
+        }
+        .field-item input {
+            flex: 1;
+        }
+        .btn-small {
+            padding: 5px 10px;
+            font-size: 12px;
+        }
+        .success-box {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 15px 0;
+        }
+        .download-link {
+            display: inline-block;
+            margin-top: 10px;
+            padding: 10px 15px;
+            background: #48bb78;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: 600;
+        }
+        .download-link:hover {
+            background: #38a169;
+        }
     </style>
 </head>
 <body>
@@ -115,17 +159,15 @@
     <div class="container">
         <div class="section">
             <h2>Assignments</h2>
-            <button class="btn" onclick="showCreateModal()">Create Assignment</button>
-            <div id="assignments-list" style="margin-top: 20px;">
+            <button class="btn" onclick="showCreateModal()">+ Create Assignment</button>
+            <div id="assignments-list">
                 <p>Loading assignments...</p>
             </div>
         </div>
         
-        <div class="section">
-            <h2>Recent Submissions</h2>
-            <div id="submissions-list">
-                <p>Loading submissions...</p>
-            </div>
+        <div class="section" id="submissions-section" style="display: none;">
+            <h2>Submissions</h2>
+            <div id="submissions-list"></div>
         </div>
     </div>
     
@@ -135,17 +177,37 @@
             <span class="close" onclick="hideCreateModal()">&times;</span>
             <h2>Create Assignment</h2>
             <form id="createForm" onsubmit="createAssignment(event)">
-                <input type="text" id="assignment_id" placeholder="Assignment ID (e.g., cs101_hw3)" required>
-                <input type="text" id="course" placeholder="Course (e.g., CS 101)">
-                <input type="text" id="name" placeholder="Assignment Name" required>
-                <input type="text" id="track_patterns" placeholder="File patterns (*.py)" value="*.py">
+                <input type="text" id="name" placeholder="Assignment Name (e.g., Homework 3 - Binary Trees)" required>
+                <input type="text" id="course" placeholder="Course (e.g., CS 101)" required>
                 <input type="datetime-local" id="deadline" required>
+                
+                <div class="field-builder">
+                    <label><strong>Required Student Info:</strong></label>
+                    <div id="fields-container">
+                        <div class="field-item">
+                            <input type="checkbox" checked disabled> <span>Matricule (always required)</span>
+                        </div>
+                        <div class="field-item">
+                            <input type="checkbox" id="field_name"> <label for="field_name">Name</label>
+                        </div>
+                        <div class="field-item">
+                            <input type="checkbox" id="field_email"> <label for="field_email">Email</label>
+                        </div>
+                    </div>
+                </div>
+                
+                <input type="text" id="track_patterns" placeholder="File patterns (*.py, *.js)" value="*.py">
+                
                 <button type="submit" class="btn" style="margin-top: 10px;">Create</button>
             </form>
+            
+            <div id="success-message" style="display: none;"></div>
         </div>
     </div>
     
     <script>
+        let currentAssignmentId = null;
+        
         async function loadAssignments() {
             const response = await fetch('/api/assignments');
             const assignments = await response.json();
@@ -153,38 +215,44 @@
             const html = assignments.length ? `
                 <table>
                     <tr>
-                        <th>Assignment ID</th>
                         <th>Course</th>
-                        <th>Name</th>
+                        <th>Assignment</th>
                         <th>Deadline</th>
+                        <th>Required Fields</th>
                         <th>Actions</th>
                     </tr>
                     ${assignments.map(a => `
                         <tr>
-                            <td>${a.assignment_id}</td>
                             <td>${a.course}</td>
                             <td>${a.name}</td>
                             <td>${new Date(a.deadline).toLocaleString()}</td>
+                            <td>${a.required_fields.join(', ')}</td>
                             <td>
-                                <a href="#" onclick="viewSubmissions('${a.assignment_id}')">View Submissions</a>
+                                <a href="/api/assignments/${a.assignment_id}/config" class="btn btn-small btn-secondary" download>⬇ Download Config</a>
+                                <button class="btn btn-small" onclick="viewSubmissions('${a.assignment_id}')">View Submissions</button>
                             </td>
                         </tr>
                     `).join('')}
                 </table>
-            ` : '<p>No assignments yet. Create one to get started.</p>';
+            ` : '<p style="margin-top: 20px;">No assignments yet. Create one to get started.</p>';
             
             document.getElementById('assignments-list').innerHTML = html;
         }
         
         async function viewSubmissions(assignmentId) {
+            currentAssignmentId = assignmentId;
             const response = await fetch(`/api/assignments/${assignmentId}/submissions`);
             const submissions = await response.json();
             
+            const submissionsSection = document.getElementById('submissions-section');
+            submissionsSection.style.display = 'block';
+            
             const html = submissions.length ? `
-                <h3>Submissions for ${assignmentId}</h3>
+                <h3>Assignment: ${assignmentId}</h3>
+                <p>${submissions.length} submission(s)</p>
                 <table>
                     <tr>
-                        <th>Student ID</th>
+                        <th>Student Info</th>
                         <th>Submitted</th>
                         <th>Incremental</th>
                         <th>Variance</th>
@@ -192,46 +260,51 @@
                         <th>Paste Bursts</th>
                         <th>Actions</th>
                     </tr>
-                    ${submissions.map(s => `
+                    ${submissions.map(s => {
+                        const infoDisplay = Object.entries(s.student_info).map(([k,v]) => `${k}: ${v}`).join(', ');
+                        return `
                         <tr>
-                            <td>${s.student_id}</td>
+                            <td>${infoDisplay}</td>
                             <td>${new Date(s.submitted_at).toLocaleString()}</td>
-                            <td>${s.analysis?.incremental_score?.toFixed(2) || 'N/A'}</td>
-                            <td>${s.analysis?.typing_variance?.toFixed(2) || 'N/A'}</td>
-                            <td>${s.analysis?.error_correction_ratio?.toFixed(2) || 'N/A'}</td>
-                            <td>${s.analysis?.paste_burst_count || 'N/A'}</td>
+                            <td>${s.analysis?.incremental_score?.toFixed(2) || 'Pending'}</td>
+                            <td>${s.analysis?.typing_variance?.toFixed(2) || 'Pending'}</td>
+                            <td>${s.analysis?.error_correction_ratio?.toFixed(2) || 'Pending'}</td>
+                            <td>${s.analysis?.paste_burst_count ?? 'Pending'}</td>
                             <td>
-                                <a href="#" onclick="viewDetail(${s.id})">View Detail</a>
+                                <a href="/submission/${s.id}" class="btn btn-small">View Detail</a>
                             </td>
                         </tr>
-                    `).join('')}
+                    `}).join('')}
                 </table>
             ` : '<p>No submissions yet.</p>';
             
             document.getElementById('submissions-list').innerHTML = html;
-        }
-        
-        async function viewDetail(submissionId) {
-            window.location.href = `/submission/${submissionId}`;
+            document.getElementById('submissions-section').scrollIntoView({ behavior: 'smooth' });
         }
         
         function showCreateModal() {
             document.getElementById('createModal').style.display = 'flex';
+            document.getElementById('success-message').style.display = 'none';
         }
         
         function hideCreateModal() {
             document.getElementById('createModal').style.display = 'none';
+            document.getElementById('createForm').reset();
         }
         
         async function createAssignment(event) {
             event.preventDefault();
             
+            const requiredFields = ['matricule'];
+            if (document.getElementById('field_name').checked) requiredFields.push('name');
+            if (document.getElementById('field_email').checked) requiredFields.push('email');
+            
             const data = {
-                assignment_id: document.getElementById('assignment_id').value,
-                course: document.getElementById('course').value,
                 name: document.getElementById('name').value,
-                track_patterns: document.getElementById('track_patterns').value.split(',').map(s => s.trim()),
-                deadline: document.getElementById('deadline').value
+                course: document.getElementById('course').value,
+                deadline: document.getElementById('deadline').value,
+                required_fields: requiredFields,
+                track_patterns: document.getElementById('track_patterns').value.split(',').map(s => s.trim())
             };
             
             const response = await fetch('/api/assignments', {
@@ -241,9 +314,21 @@
             });
             
             if (response.ok) {
-                hideCreateModal();
+                const result = await response.json();
+                const successMsg = document.getElementById('success-message');
+                successMsg.innerHTML = `
+                    <div class="success-box">
+                        <strong>✅ Assignment created!</strong><br>
+                        <p>Share this config file with your students:</p>
+                        <a href="${result.download_url}" class="download-link" download>
+                            📥 Download ${result.assignment_id}.editorwatch
+                        </a>
+                    </div>
+                `;
+                successMsg.style.display = 'block';
+                
                 loadAssignments();
-                alert('Assignment created successfully!');
+                document.getElementById('createForm').reset();
             } else {
                 alert('Error creating assignment');
             }

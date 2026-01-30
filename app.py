@@ -1,11 +1,12 @@
 import os
-from flask import Flask, request, jsonify, render_template, redirect, url_for, session, Response
+from flask import Flask, request, jsonify, render_template, redirect, url_for, session, Response, send_from_directory
 from models import db, Submission, Assignment, AnalysisResult, init_db
 from cryptography.fernet import Fernet
 import json
 from datetime import datetime
 import redis
 from rq import Queue
+import secrets
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -29,7 +30,7 @@ task_queue = Queue('analysis', connection=redis_conn)
 
 init_db(app)
 
-# Simple auth (replace with proper auth in production)
+# Simple auth
 ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'admin')
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'changeme')
 
@@ -44,6 +45,14 @@ def decrypt_data(encrypted_data):
     """Decrypt data from storage"""
     decrypted = cipher.decrypt(encrypted_data.encode())
     return json.loads(decrypted.decode())
+
+
+# Serve static files (including favicon)
+@app.route('/extension/<path:filename>')
+def serve_extension_files(filename):
+    """Serve extension static files"""
+    extension_path = os.path.join(os.path.dirname(__file__), 'extension')
+    return send_from_directory(extension_path, filename)
 
 
 @app.route('/')
@@ -72,7 +81,7 @@ def logout():
 
 @app.route('/init-db')
 def initialize_database():
-    """Initialize database tables (run once after first deploy)"""
+    """Initialize database tables"""
     try:
         db.create_all()
         return jsonify({'success': True, 'message': 'Database tables created successfully'})
@@ -87,7 +96,7 @@ def submit_assignment():
         data = request.json
         
         # Validate required fields
-        required = ['student_id', 'assignment_id', 'events', 'code']
+        required = ['student_info', 'assignment_id', 'events', 'code']
         if not all(field in data for field in required):
             return jsonify({'error': 'Missing required fields'}), 400
         
@@ -105,7 +114,7 @@ def submit_assignment():
         
         # Save submission
         submission = Submission(
-            student_id=data['student_id'],
+            student_info=json.dumps(data['student_info']),  # Store flexible student info
             assignment_id=data['assignment_id'],
             events_encrypted=events_encrypted,
             code_encrypted=code_encrypted
@@ -113,7 +122,7 @@ def submit_assignment():
         db.session.add(submission)
         db.session.commit()
         
-        # Queue analysis job (FIXED: correct import path)
+        # Queue analysis job
         task_queue.enqueue('analysis.worker.analyze_submission', submission.id)
         
         return jsonify({
@@ -134,16 +143,31 @@ def assignments():
     
     if request.method == 'POST':
         data = request.json
+        
+        # Auto-generate assignment ID
+        course_prefix = data.get('course', 'COURSE').replace(' ', '').upper()[:10]
+        assignment_id = f"{course_prefix}_{secrets.token_hex(4)}"
+        
         assignment = Assignment(
-            assignment_id=data['assignment_id'],
+            assignment_id=assignment_id,
             course=data.get('course', ''),
             name=data['name'],
             track_patterns=json.dumps(data.get('track_patterns', ['*.py'])),
-            deadline=datetime.fromisoformat(data['deadline'])
+            deadline=datetime.fromisoformat(data['deadline']),
+            required_fields=json.dumps(data.get('required_fields', ['matricule']))
         )
         db.session.add(assignment)
         db.session.commit()
-        return jsonify({'success': True, 'assignment_id': assignment.assignment_id}), 201
+        
+        # Generate config download URL
+        config_url = f'/api/assignments/{assignment_id}/config'
+        
+        return jsonify({
+            'success': True, 
+            'assignment_id': assignment.assignment_id,
+            'config_url': config_url,
+            'download_url': url_for('download_config', assignment_id=assignment_id, _external=True)
+        }), 201
     
     assignments = Assignment.query.all()
     return jsonify([{
@@ -151,22 +175,19 @@ def assignments():
         'course': a.course,
         'name': a.name,
         'deadline': a.deadline.isoformat(),
-        'created_at': a.created_at.isoformat()
+        'created_at': a.created_at.isoformat(),
+        'required_fields': json.loads(a.required_fields) if a.required_fields else ['matricule']
     } for a in assignments])
 
 
 @app.route('/api/assignments/<assignment_id>/config')
 def download_config(assignment_id):
     """Download .editorwatch config file for an assignment"""
-    if 'logged_in' not in session:
-        return jsonify({'error': 'Unauthorized'}), 401
-    
     assignment = Assignment.query.filter_by(assignment_id=assignment_id).first_or_404()
     
-    # Get server URL from environment or construct from request
+    # Get server URL
     server_url = os.environ.get('SERVER_URL')
     if not server_url:
-        # Fallback: construct from current request
         server_url = request.url_root.rstrip('/')
     
     config = {
@@ -175,14 +196,15 @@ def download_config(assignment_id):
         'course': assignment.course,
         'deadline': assignment.deadline.isoformat(),
         'server': server_url,
-        'track_patterns': json.loads(assignment.track_patterns)
+        'track_patterns': json.loads(assignment.track_patterns),
+        'required_fields': json.loads(assignment.required_fields) if assignment.required_fields else ['matricule']
     }
     
     return Response(
         json.dumps(config, indent=2),
         mimetype='application/json',
         headers={
-            'Content-Disposition': 'attachment; filename=.editorwatch'
+            'Content-Disposition': f'attachment; filename={assignment_id}.editorwatch'
         }
     )
 
@@ -198,9 +220,11 @@ def get_submissions(assignment_id):
     results = []
     for sub in submissions:
         analysis = AnalysisResult.query.filter_by(submission_id=sub.id).first()
+        student_info = json.loads(sub.student_info)
+        
         results.append({
             'id': sub.id,
-            'student_id': sub.student_id,
+            'student_info': student_info,
             'submitted_at': sub.submitted_at.isoformat(),
             'analysis': {
                 'incremental_score': analysis.incremental_score if analysis else None,
@@ -215,7 +239,7 @@ def get_submissions(assignment_id):
 
 @app.route('/api/submissions/<int:submission_id>')
 def get_submission_detail(submission_id):
-    """Get detailed submission data with decrypted events and code"""
+    """Get detailed submission data"""
     if 'logged_in' not in session:
         return jsonify({'error': 'Unauthorized'}), 401
     
@@ -224,10 +248,11 @@ def get_submission_detail(submission_id):
     
     events = decrypt_data(submission.events_encrypted)
     code = decrypt_data(submission.code_encrypted)
+    student_info = json.loads(submission.student_info)
     
     return jsonify({
         'id': submission.id,
-        'student_id': submission.student_id,
+        'student_info': student_info,
         'assignment_id': submission.assignment_id,
         'submitted_at': submission.submitted_at.isoformat(),
         'events': events,
@@ -244,7 +269,7 @@ def get_submission_detail(submission_id):
 
 @app.route('/submission/<int:submission_id>')
 def view_submission_detail(submission_id):
-    """View detailed submission page with timeline (NEW ROUTE)"""
+    """View detailed submission page"""
     if 'logged_in' not in session:
         return redirect(url_for('login'))
     
@@ -253,12 +278,14 @@ def view_submission_detail(submission_id):
     
     events = decrypt_data(submission.events_encrypted)
     code = decrypt_data(submission.code_encrypted)
+    student_info = json.loads(submission.student_info)
     
     return render_template('submission_detail.html',
                          submission=submission,
                          analysis=analysis,
                          events=events,
-                         code=code)
+                         code=code,
+                         student_info=student_info)
 
 
 if __name__ == '__main__':

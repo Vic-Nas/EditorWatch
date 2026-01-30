@@ -21,6 +21,7 @@ class Assignment(db.Model):
     name = db.Column(db.String(200), nullable=False)
     track_patterns = db.Column(db.Text)  # JSON array of file patterns
     deadline = db.Column(db.DateTime, nullable=False)
+    required_fields = db.Column(db.Text, default='["matricule"]')  # NEW: JSON array of required student fields
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     submissions = db.relationship('Submission', backref='assignment', lazy=True)
@@ -31,7 +32,7 @@ class Submission(db.Model):
     __tablename__ = 'submissions'
     
     id = db.Column(db.Integer, primary_key=True)
-    student_id = db.Column(db.String(50), nullable=False)
+    student_info = db.Column(db.Text, nullable=False)  # CHANGED: JSON with flexible fields (matricule, name, etc.)
     assignment_id = db.Column(db.String(50), db.ForeignKey('assignments.assignment_id'), nullable=False)
     events_encrypted = db.Column(db.Text, nullable=False)
     code_encrypted = db.Column(db.Text, nullable=False)

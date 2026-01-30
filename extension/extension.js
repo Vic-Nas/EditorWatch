@@ -73,7 +73,7 @@ function showOptInPrompt(config, context) {
             context.globalState.update('accepted_assignments', accepted);
             startMonitoring(config, context);
         } else if (selection === 'Learn More') {
-            vscode.env.openExternal(vscode.Uri.parse('https://github.com/yourusername/editorwatch'));
+            vscode.env.openExternal(vscode.Uri.parse('https://github.com/Vic-Nas/EditorWatch'));
         }
     });
 }
@@ -148,22 +148,34 @@ async function submitAssignment(context) {
     if (answer !== 'Submit') return;
     
     vscode.window.withProgress({
-        location: vscode.StatusBarAlignment.Right,
+        location: vscode.ProgressLocation.Notification,
         title: 'Submitting to EditorWatch...'
     }, async () => {
         try {
+            // Collect required student info dynamically
+            const requiredFields = currentAssignment.required_fields || ['matricule'];
+            const studentInfo = {};
+            
+            for (const field of requiredFields) {
+                const value = await vscode.window.showInputBox({
+                    prompt: `Enter your ${field}`,
+                    placeHolder: field === 'matricule' ? 'e.g., 12345678' : `Your ${field}`,
+                    ignoreFocusOut: true
+                });
+                
+                if (!value) {
+                    vscode.window.showErrorMessage('Submission cancelled - all fields are required');
+                    return;
+                }
+                
+                studentInfo[field] = value;
+            }
+            
             const events = db.prepare('SELECT * FROM events ORDER BY timestamp').all();
             const code = await getCodeFiles();
             
-            const studentId = await vscode.window.showInputBox({
-                prompt: 'Enter your student ID',
-                placeHolder: 'e.g., student123'
-            });
-            
-            if (!studentId) return;
-            
             const payload = JSON.stringify({
-                student_id: studentId,
+                student_info: studentInfo,
                 assignment_id: currentAssignment.assignment_id,
                 events: events,
                 code: code
@@ -171,7 +183,7 @@ async function submitAssignment(context) {
             
             await makeRequest(currentAssignment.server + '/api/submit', payload);
             
-            vscode.window.showInformationMessage('Assignment submitted successfully!');
+            vscode.window.showInformationMessage('✅ Assignment submitted successfully!');
             db.close();
             db = null;
             statusBarItem.hide();
