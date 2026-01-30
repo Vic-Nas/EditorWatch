@@ -77,7 +77,7 @@
             border-radius: 5px;
             font-family: inherit;
         }
-        .modal textarea { min-height: 100px; font-size: 13px; }
+        .modal textarea { min-height: 150px; font-size: 13px; font-family: monospace; }
         .close {
             float: right;
             cursor: pointer;
@@ -105,32 +105,39 @@
         .status-suspicious { color: #e74c3c; font-weight: bold; }
         .status-pending { color: #95a5a6; font-weight: bold; }
         .help-text { font-size: 12px; color: #666; margin-top: 5px; }
-        .tab-container {
+        .pattern-chips {
             display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-            border-bottom: 2px solid #eee;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 10px 0;
         }
-        .tab {
-            padding: 10px 20px;
+        .chip {
+            background: #e0e7ff;
+            padding: 6px 12px;
+            border-radius: 16px;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .chip .remove {
             cursor: pointer;
-            border-bottom: 3px solid transparent;
-            color: #666;
+            color: #667eea;
+            font-weight: bold;
         }
-        .tab.active { color: #667eea; border-bottom-color: #667eea; }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-        .file-input-wrapper { position: relative; display: inline-block; }
-        .file-input-label {
-            display: inline-block;
-            padding: 10px 20px;
-            background: #667eea;
-            color: white;
-            border-radius: 5px;
-            cursor: pointer;
+        .add-pattern {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
         }
-        .file-input-label:hover { background: #5568d3; }
-        input[type="file"] { position: absolute; left: -9999px; }
+        .add-pattern input {
+            flex: 1;
+            margin: 0;
+        }
+        .add-pattern button {
+            margin: 0;
+            padding: 10px 16px;
+        }
     </style>
 </head>
 <body>
@@ -162,147 +169,84 @@
                 <input type="datetime-local" id="deadline" required>
                 
                 <label><strong>Track Patterns:</strong></label>
-                <input type="text" id="track_patterns" placeholder="*.py, *.js" value="*.py">
-                <div class="help-text">Comma-separated</div>
+                <div class="help-text">File patterns to monitor (e.g., *.py, *.js)</div>
+                <div id="pattern-chips" class="pattern-chips"></div>
+                <div class="add-pattern">
+                    <input type="text" id="new-pattern" placeholder="e.g., *.ts">
+                    <button type="button" class="btn btn-small" onclick="addPattern()">Add</button>
+                </div>
                 
                 <label><strong>Students:</strong></label>
-                <div class="tab-container">
-                    <div class="tab active" onclick="switchTab('manual')">Manual</div>
-                    <div class="tab" onclick="switchTab('csv')">CSV Upload</div>
-                    <div class="tab" onclick="switchTab('sheet')">Saved List</div>
-                </div>
+                <div class="help-text">Format: email,First Name,Last Name (one per line)</div>
+                <textarea id="students" placeholder="alice@uni.edu,Alice,Johnson
+bob@uni.edu,Bob,Smith
+charlie@uni.edu,Charlie,Brown"></textarea>
                 
-                <div id="tab-manual" class="tab-content active">
-                    <textarea id="students-manual" placeholder="email,First Name,Last Name
-alice@uni.edu,Alice,Johnson"></textarea>
-                    <div class="help-text">Format: email,first_name,last_name</div>
-                </div>
-                
-                <div id="tab-csv" class="tab-content">
-                    <div class="file-input-wrapper">
-                        <label class="file-input-label" for="csv-file">📄 Choose CSV</label>
-                        <input type="file" id="csv-file" accept=".csv" onchange="handleCSV(event)">
-                    </div>
-                    <div id="csv-preview"></div>
-                </div>
-                
-                <div id="tab-sheet" class="tab-content">
-                    <select id="sheet-select">
-                        <option value="">Select saved list...</option>
-                    </select>
-                    <div class="help-text">Or <a href="#" onclick="showSheetManager(); return false;">manage lists</a></div>
-                </div>
-                
-                <button type="submit" class="btn" style="margin-top: 10px;">Create & Send Codes</button>
+                <button type="submit" class="btn" style="margin-top: 10px;">Create Assignment</button>
             </form>
             
-            <div id="success-message" style="display: none;"></div>
+            <div id="result-message" style="display: none;"></div>
         </div>
     </div>
     
     <script>
-        var currentTab = 'manual';
-        var csvData = null;
-        var sheets = [];
+        var patterns = ['*.py', '*.js'];
         
-        function switchTab(tab) {
-            currentTab = tab;
-            var tabs = document.querySelectorAll('.tab');
-            var contents = document.querySelectorAll('.tab-content');
-            
-            tabs.forEach(function(t) { t.classList.remove('active'); });
-            contents.forEach(function(t) { t.classList.remove('active'); });
-            
-            var activeTab = Array.from(tabs).find(function(t) { 
-                return t.getAttribute('onclick').indexOf(tab) > -1; 
-            });
-            if (activeTab) activeTab.classList.add('active');
-            
-            var activeContent = document.getElementById('tab-' + tab);
-            if (activeContent) activeContent.classList.add('active');
+        function renderPatterns() {
+            var container = document.getElementById('pattern-chips');
+            container.innerHTML = patterns.map(function(p, i) {
+                return '<div class="chip">' + p + 
+                       '<span class="remove" onclick="removePattern(' + i + ')">×</span></div>';
+            }).join('');
         }
         
-        function loadSheets() {
-            fetch('/api/sheets')
-                .then(function(response) { return response.json(); })
-                .then(function(data) {
-                    sheets = data;
-                    var select = document.getElementById('sheet-select');
-                    select.innerHTML = '<option value="">Select saved list...</option>' +
-                        sheets.map(function(s) { 
-                            return '<option value="' + s.id + '">' + s.name + ' (' + s.student_count + ' students)</option>'; 
-                        }).join('');
-                })
-                .catch(function(e) {
-                    console.error('Failed to load sheets:', e);
-                });
+        function addPattern() {
+            var input = document.getElementById('new-pattern');
+            var pattern = input.value.trim();
+            if (pattern && !patterns.includes(pattern)) {
+                patterns.push(pattern);
+                renderPatterns();
+                input.value = '';
+            }
         }
         
-        function handleCSV(event) {
-            var file = event.target.files[0];
-            if (!file) return;
-            
-            var reader = new FileReader();
-            reader.onload = function(e) {
-                var text = e.target.result;
-                var lines = text.split('\n').map(function(l) { return l.trim(); }).filter(function(l) { return l; });
-                
-                csvData = lines.slice(1).map(function(line) {
-                    var parts = line.split(',').map(function(s) { return s.trim(); });
-                    return { 
-                        email: parts[0], 
-                        first_name: parts[1], 
-                        last_name: parts[2] 
-                    };
-                }).filter(function(s) { return s.email; });
-                
-                document.getElementById('csv-preview').innerHTML = 
-                    '<div class="success-box">✅ Loaded ' + csvData.length + ' students</div>';
-            };
-            reader.readAsText(file);
+        function removePattern(index) {
+            patterns.splice(index, 1);
+            renderPatterns();
         }
         
         function parseStudents() {
-            if (currentTab === 'manual') {
-                var text = document.getElementById('students-manual').value;
-                var lines = text.split('\n').map(function(l) { return l.trim(); }).filter(function(l) { return l; });
-                var start = lines[0] && lines[0].toLowerCase().indexOf('email') > -1 ? 1 : 0;
-                
-                return lines.slice(start).map(function(line) {
-                    var parts = line.split(',').map(function(s) { return s.trim(); });
-                    if (parts.length >= 3) {
-                        return { 
-                            email: parts[0], 
-                            first_name: parts[1], 
-                            last_name: parts[2] 
-                        };
-                    }
-                    return null;
-                }).filter(function(s) { return s && s.email; });
-            } else if (currentTab === 'csv') {
-                return csvData || [];
-            } else if (currentTab === 'sheet') {
-                var sheetId = document.getElementById('sheet-select').value;
-                if (!sheetId) return [];
-                var sheet = sheets.find(function(s) { return s.id == sheetId; });
-                return sheet ? JSON.parse(sheet.students) : [];
-            }
-            return [];
+            var text = document.getElementById('students').value;
+            var lines = text.split('\n').map(function(l) { return l.trim(); }).filter(function(l) { return l; });
+            
+            return lines.map(function(line) {
+                var parts = line.split(',').map(function(s) { return s.trim(); });
+                if (parts.length >= 1) {
+                    return {
+                        email: parts[0],
+                        first_name: parts[1] || '',
+                        last_name: parts[2] || ''
+                    };
+                }
+                return null;
+            }).filter(function(s) { return s && s.email; });
         }
         
         function loadAssignments() {
             fetch('/api/assignments')
-                .then(function(response) { return response.json(); })
+                .then(function(r) { return r.json(); })
                 .then(function(assignments) {
                     var html = assignments.length ? 
-                        '<table><tr><th>Course</th><th>Assignment</th><th>Deadline</th><th>Actions</th></tr>' +
+                        '<table><tr><th>Course</th><th>Assignment</th><th>Deadline</th><th>Submissions</th><th>Actions</th></tr>' +
                         assignments.map(function(a) {
                             return '<tr>' +
                                 '<td>' + a.course + '</td>' +
                                 '<td>' + a.name + '</td>' +
                                 '<td>' + new Date(a.deadline).toLocaleString() + '</td>' +
+                                '<td>' + a.submitted_count + '/' + a.total_students + '</td>' +
                                 '<td>' +
                                 '<a href="/api/assignments/' + a.assignment_id + '/config" class="btn btn-small btn-secondary" download>⬇ Config</a> ' +
+                                '<a href="/api/assignments/' + a.assignment_id + '/codes.csv" class="btn btn-small btn-secondary" download>📋 Codes CSV</a> ' +
                                 '<button class="btn btn-small" onclick="viewSubmissions(\'' + a.assignment_id + '\')">View</button> ' +
                                 '<button class="btn btn-small btn-danger" onclick="deleteAssignment(\'' + a.assignment_id + '\')">Delete</button>' +
                                 '</td></tr>';
@@ -310,21 +254,17 @@ alice@uni.edu,Alice,Johnson"></textarea>
                         : '<p style="margin-top: 20px;">No assignments yet.</p>';
                     
                     document.getElementById('assignments-list').innerHTML = html;
-                })
-                .catch(function(e) {
-                    console.error('Error loading assignments:', e);
-                    document.getElementById('assignments-list').innerHTML = '<p style="color: red;">Error loading assignments</p>';
                 });
         }
         
         function viewSubmissions(assignmentId) {
             fetch('/api/assignments/' + assignmentId + '/submissions')
-                .then(function(response) { return response.json(); })
+                .then(function(r) { return r.json(); })
                 .then(function(submissions) {
-                    var submissionsSection = document.getElementById('submissions-section');
-                    submissionsSection.style.display = 'block';
+                    var section = document.getElementById('submissions-section');
+                    section.style.display = 'block';
                     
-                    var statusLabels = {
+                    var labels = {
                         'clean': '🟢 Clean',
                         'warning': '🟡 Review',
                         'suspicious': '🔴 Suspicious',
@@ -333,27 +273,31 @@ alice@uni.edu,Alice,Johnson"></textarea>
                     
                     var html = submissions.length ? 
                         '<h3>Assignment: ' + assignmentId + '</h3>' +
-                        '<p>' + submissions.length + ' submission(s)</p>' +
-                        '<table><tr><th>Student</th><th>Submitted</th><th>Status</th><th>Actions</th></tr>' +
+                        '<table><tr><th>Student</th><th>Submitted</th><th>Score</th><th>Status</th><th>Actions</th></tr>' +
                         submissions.map(function(s) {
+                            var scoreText = s.overall_score !== null ? s.overall_score.toFixed(1) + '/10' : '-';
                             return '<tr>' +
                                 '<td>' + (s.student_name || s.email) + '</td>' +
                                 '<td>' + new Date(s.submitted_at).toLocaleString() + '</td>' +
-                                '<td><span class="status-' + s.status + '">' + (statusLabels[s.status] || s.status) + '</span></td>' +
-                                '<td><a href="/submission/' + s.id + '" class="btn btn-small">Detail</a></td>' +
-                                '</tr>';
+                                '<td>' + scoreText + '</td>' +
+                                '<td><span class="status-' + s.status + '">' + labels[s.status] + '</span></td>' +
+                                '<td>' +
+                                '<a href="/submission/' + s.id + '" class="btn btn-small">Detail</a> ' +
+                                '<a href="/api/submissions/' + s.id + '/export" class="btn btn-small btn-secondary" download>📥 Export</a>' +
+                                '</td></tr>';
                         }).join('') + '</table>'
                         : '<p>No submissions yet.</p>';
                     
                     document.getElementById('submissions-list').innerHTML = html;
-                    submissionsSection.scrollIntoView({ behavior: 'smooth' });
+                    section.scrollIntoView({ behavior: 'smooth' });
                 });
         }
         
         function showCreateModal() {
             document.getElementById('createModal').style.display = 'flex';
-            document.getElementById('success-message').style.display = 'none';
-            loadSheets();
+            document.getElementById('result-message').style.display = 'none';
+            patterns = ['*.py', '*.js'];
+            renderPatterns();
         }
         
         function hideCreateModal() {
@@ -370,11 +314,6 @@ alice@uni.edu,Alice,Johnson"></textarea>
                 return;
             }
             
-            var patterns = document.getElementById('track_patterns').value
-                .split(',')
-                .map(function(s) { return s.trim(); })
-                .filter(function(s) { return s; });
-            
             var data = {
                 name: document.getElementById('name').value,
                 course: document.getElementById('course').value,
@@ -388,36 +327,33 @@ alice@uni.edu,Alice,Johnson"></textarea>
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(data)
             })
-            .then(function(response) { return response.json(); })
+            .then(function(r) { return r.json(); })
             .then(function(result) {
-                var successMsg = document.getElementById('success-message');
+                var msg = document.getElementById('result-message');
                 
-                var message = '<div class="success-box">' +
+                var html = '<div class="success-box">' +
                     '<strong>✅ Assignment created!</strong><br>' +
-                    '<p>Codes sent to ' + result.codes_sent + ' student(s)</p>';
+                    '<p>Generated codes for ' + result.students.length + ' student(s)</p>';
                 
-                if (!result.smtp_enabled) {
-                    message += '<div class="warning-box" style="margin-top: 10px;">' +
+                if (result.smtp_enabled) {
+                    html += '<p>Emails sent: ' + result.codes_sent + '/' + result.students.length + '</p>';
+                } else {
+                    html += '<div class="warning-box" style="margin-top: 10px;">' +
                         '<strong>⚠️ SMTP not configured</strong><br>' +
-                        'Codes generated but not emailed.' +
+                        'Download the codes CSV to share with students.' +
                         '</div>';
                 }
                 
-                if (result.codes_failed && result.codes_failed.length > 0) {
-                    message += '<div class="warning-box" style="margin-top: 10px;">' +
-                        '<strong>Failed emails:</strong><br>' +
-                        result.codes_failed.map(function(f) { 
-                            return f.first_name + ' ' + f.last_name + ' (' + f.email + '): <code>' + f.code + '</code>'; 
-                        }).join('<br>') +
-                        '</div>';
-                }
-                
-                message += '<a href="' + result.config_url + '" class="btn btn-secondary" download style="margin-top: 10px;">' +
+                html += '<a href="' + result.config_url + '" class="btn btn-secondary" download style="margin-top: 10px; margin-right: 10px;">' +
                     '📥 Download Config' +
+                    '</a>';
+                
+                html += '<a href="/api/assignments/' + result.assignment_id + '/codes.csv" class="btn btn-secondary" download style="margin-top: 10px;">' +
+                    '📋 Download Codes CSV' +
                     '</a></div>';
                 
-                successMsg.innerHTML = message;
-                successMsg.style.display = 'block';
+                msg.innerHTML = html;
+                msg.style.display = 'block';
                 
                 loadAssignments();
                 document.getElementById('createForm').reset();
@@ -431,22 +367,16 @@ alice@uni.edu,Alice,Johnson"></textarea>
         function deleteAssignment(assignmentId) {
             if (!confirm('Delete this assignment? All data will be lost!')) return;
             
-            fetch('/api/assignments/' + assignmentId, {
-                method: 'DELETE'
-            })
-            .then(function(response) {
-                if (response.ok) {
-                    loadAssignments();
-                    document.getElementById('submissions-section').style.display = 'none';
-                }
-            });
+            fetch('/api/assignments/' + assignmentId, { method: 'DELETE' })
+                .then(function(r) {
+                    if (r.ok) {
+                        loadAssignments();
+                        document.getElementById('submissions-section').style.display = 'none';
+                    }
+                });
         }
         
-        function showSheetManager() {
-            alert('Sheet manager coming soon! For now, use the API directly.');
-        }
-        
-        // Load assignments on page load
+        renderPatterns();
         loadAssignments();
     </script>
 </body>

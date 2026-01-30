@@ -2,155 +2,153 @@
 
 **Code authenticity monitor for programming assignments** - Track how students write code, not just what they write.
 
-<p align="center">
-  <img src="extension/icon.png" width="128" alt="EditorWatch Icon">
-</p>
+## Quick Deploy
 
-## What It Does
+### Option 1: Railway (Recommended - Free Tier Available)
 
-EditorWatch helps educators detect AI-generated or copied code by monitoring the **coding process**:
+1. Fork this repo
+2. Go to [Railway.app](https://railway.app) → New Project → Deploy from GitHub
+3. Add these environment variables:
+   ```
+   DATABASE_URL=<railway-postgres-url>
+   REDIS_URL=<railway-redis-url>
+   SECRET_KEY=<random-string>
+   ADMIN_USERNAME=admin
+   ADMIN_PASSWORD=<your-password>
+   ```
+4. Railway auto-detects the Procfile and deploys both web + worker
 
-- ✅ Tracks typing patterns, edits, and development timeline
-- ✅ Detects paste bursts and suspicious patterns
-- ✅ Provides visual timeline of student work
-- ✅ Privacy-focused: students must explicitly consent
+### Option 2: Your Own Server
 
-## Quick Start
+```bash
+git clone https://github.com/Vic-Nas/EditorWatch
+cd EditorWatch
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Set environment variables
+export DATABASE_URL='postgresql://user:pass@host/db'
+export REDIS_URL='redis://host:6379'
+export SECRET_KEY='your-secret-key'
+export ADMIN_USERNAME='admin'
+export ADMIN_PASSWORD='your-password'
+
+# Run migrations
+python -c "from app import app, db; app.app_context().push(); db.create_all()"
+
+# Start web server
+gunicorn app:app &
+
+# Start worker
+python -m rq.worker analysis --url $REDIS_URL
+```
+
+### Optional: SMTP Email (otherwise generates CSV with codes)
+
+```bash
+export SMTP_HOST='smtp.gmail.com'
+export SMTP_PORT='587'
+export SMTP_USER='your-email@gmail.com'
+export SMTP_PASSWORD='your-app-password'
+export SMTP_FROM='your-email@gmail.com'
+```
+
+## Usage
 
 ### For Educators
 
-1. **Deploy the server** (free on Railway):
-   ```bash
-   git clone https://github.com/Vic-Nas/EditorWatch
-   # Deploy to Railway, Heroku, or run locally
-   ```
-
-2. **Create an assignment** via web dashboard:
-   - Add student names and emails (or upload CSV)
-   - Set deadline and file patterns to track
-   - Students receive access codes via email
-
-3. **Share the `editorwatch` file** with students
-
-4. **Review submissions** with detailed analytics
+1. **Login** to dashboard at `https://your-server.com`
+2. **Create assignment**:
+   - Enter course name, assignment name, deadline
+   - Customize file patterns to track (e.g., `*.py`, `*.js`)
+   - Paste student list (email,first,last format)
+   - System generates unique access codes
+3. **Download files**:
+   - `editorwatch` config file → share with all students
+   - `codes.csv` → contains all student access codes
+4. **Students submit** → Auto-analyzed in background
+5. **Review submissions** → See scores, flags, visualizations
 
 ### For Students
 
-1. **Install extension** from VS Code Marketplace (search "EditorWatch")
+1. Install "EditorWatch" extension from VS Code Marketplace
+2. Place `editorwatch` file in assignment folder root
+3. Enter your access code when prompted
+4. Code normally - extension tracks in background
+5. Click 👁️ icon to submit when done
 
-2. **Place `editorwatch` file** in your assignment folder (root directory, no extension)
+## What Gets Analyzed
 
-3. **Enter your access code** when prompted
+- **Incremental Score** (0-10): Gradual vs sudden code appearance
+- **Typing Variance** (0-10): Natural vs robotic patterns
+- **Error Correction** (0-10): Trial-and-error vs perfect-first-time
+- **Work Sessions** (0-10): Multiple sessions vs one continuous session
+- **Paste Bursts**: Count of large code insertions
+- **Overall Score** (0-10): Weighted combination of above
 
-4. **Code normally** - monitoring is automatic
+**Scoring**: 0-3 = Suspicious | 4-6 = Review | 7-10 = Likely Authentic
 
-5. **Submit** by clicking the 👁️ icon when done
-
-## Key Features
-
-### Smart Analytics
-- **Incremental Score**: Gradual vs. sudden code appearance
-- **Typing Variance**: Natural vs. robotic patterns
-- **Error Correction**: Trial-and-error vs. perfect-first-time
-- **Paste Detection**: Identifies large code blocks
-
-### Easy Student Management
-- Upload student lists (CSV with email, first name, last name)
-- Reuse saved lists across assignments
-- Automatic access code generation and emailing
-
-### Privacy First
-- Students explicitly opt-in for each assignment
-- Only tracks specified file patterns (e.g., `*.py`)
-- Data encrypted and deleted after grading
-- Open source - verify what it does
-
-## Installation
-
-### Server Deployment
-
-**Option 1: Railway (Recommended)**
-```bash
-# One-click deploy
-# Add these environment variables:
-DATABASE_URL=postgresql://...
-REDIS_URL=redis://...
-SECRET_KEY=your-secret-key
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=your-password
-```
-
-**Option 2: Local Development**
-```bash
-pip install -r requirements.txt
-export DATABASE_URL='sqlite:///editorwatch.db'
-python app.py
-```
-
-### VS Code Extension
-
-Install from [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=vn-tf.editorwatch) or:
-
-```bash
-cd extension
-npm install
-code --install-extension .
-```
-
-## How It Works
+## Architecture
 
 ```
-┌─────────────┐         ┌──────────────┐         ┌─────────────┐
-│   Student   │────────▶│  VS Code Ext │────────▶│   Server    │
-│  codes in   │  tracks │   monitors   │ submits │  analyzes   │
-│  VS Code    │  edits  │   changes    │  events │  patterns   │
-└─────────────┘         └──────────────┘         └─────────────┘
-                                                           │
-                                                           ▼
-                                                   ┌──────────────┐
-                                                   │  Dashboard   │
-                                                   │  for teacher │
-                                                   └──────────────┘
+┌─────────────────┐
+│  VS Code Ext    │ → Tracks edits
+│  (student side) │ → Submits events to server
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  Flask Server   │ → Receives submissions
+│                 │ → Queues analysis jobs
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  RQ Worker      │ → Analyzes patterns
+│  (background)   │ → Generates visualizations
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  Dashboard      │ → Teacher reviews results
+│  (web UI)       │ → Export data as JSON
+└─────────────────┘
 ```
 
-## Configuration
+## Files Explained
 
-### Student List CSV Format
-```csv
-email,first_name,last_name
-alice@uni.edu,Alice,Johnson
-bob@uni.edu,Bob,Smith
-```
+- `app.py` - Flask web server (REST API + dashboard)
+- `models.py` - Database schema (SQLAlchemy)
+- `analysis/metrics.py` - Core detection algorithms
+- `analysis/worker.py` - Background analysis queue (RQ)
+- `analysis/visualizer.py` - Plotly charts
+- `templates/` - Web UI (dashboard, submission detail)
 
-### Assignment Config (`editorwatch` file)
-```json
-{
-  "assignment_id": "CS101_HW3",
-  "server": "https://your-server.railway.app",
-  "track_patterns": ["*.py", "*.js"],
-  "deadline": "2025-02-15T23:59:59Z",
-  "course": "CS 101",
-  "name": "Homework 3"
-}
-```
+## Tech Stack
 
-## Limitations
-
-- **Not foolproof**: Determined students can bypass monitoring
-- **Use as one tool**: Combine with code reviews, oral exams
-- **Requires VS Code**: Students using other editors won't be tracked
-- **Explicit consent**: Students must agree to monitoring
+- **Backend**: Flask, PostgreSQL, Redis
+- **Analysis**: NumPy, custom metrics
+- **Visualization**: Plotly
+- **Queue**: RQ (Redis Queue)
+- **Extension**: TypeScript, VS Code API
 
 ## License
 
-**Dual License:**
-- **Free** for non-profit education (MIT License)
-- **Paid** for commercial use (bootcamps, EdTech companies)
+Dual license:
+- **Free** for non-profit education (MIT)
+- **Paid** for commercial use
 
-See [LICENCE.md](LICENCE.md) for details.
+See [LICENCE.md](LICENCE.md)
+
+## Limitations
+
+- Not foolproof - determined students can bypass
+- Requires VS Code
+- Students must explicitly consent
+- Use as ONE tool alongside code reviews, oral exams
 
 ## Support
 
-- 📖 [Documentation](https://github.com/Vic-Nas/EditorWatch/wiki)
 - 🐛 [Report Issues](https://github.com/Vic-Nas/EditorWatch/issues)
 - 💬 [Discussions](https://github.com/Vic-Nas/EditorWatch/discussions)
