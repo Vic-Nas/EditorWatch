@@ -23,8 +23,8 @@ class Assignment(db.Model):
     deadline = db.Column(db.DateTime, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
-    submissions = db.relationship('Submission', backref='assignment', lazy=True)
-    student_codes = db.relationship('StudentCode', backref='assignment', lazy=True)
+    submissions = db.relationship('Submission', backref='assignment', lazy=True, cascade='all, delete-orphan')
+    student_codes = db.relationship('StudentCode', backref='assignment', lazy=True, cascade='all, delete-orphan')
 
 
 class StudentCode(db.Model):
@@ -34,11 +34,23 @@ class StudentCode(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     assignment_id = db.Column(db.String(50), db.ForeignKey('assignments.assignment_id'), nullable=False)
     email = db.Column(db.String(200), nullable=False)
+    first_name = db.Column(db.String(100))
+    last_name = db.Column(db.String(100))
     code = db.Column(db.String(20), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
-    # Composite unique constraint
     __table_args__ = (db.UniqueConstraint('assignment_id', 'email', name='_assignment_email_uc'),)
+
+
+class StudentSheet(db.Model):
+    """Reusable student lists"""
+    __tablename__ = 'student_sheets'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False)
+    students = db.Column(db.Text, nullable=False)  # JSON: [{"email": "...", "first_name": "...", "last_name": "..."}]
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class Submission(db.Model):
@@ -51,10 +63,9 @@ class Submission(db.Model):
     events_encrypted = db.Column(db.Text, nullable=False)
     submitted_at = db.Column(db.DateTime, default=datetime.utcnow)
     
-    # Only keep latest submission per student per assignment
     __table_args__ = (db.UniqueConstraint('assignment_id', 'email', name='_assignment_student_uc'),)
     
-    analysis_result = db.relationship('AnalysisResult', backref='submission', uselist=False)
+    analysis_result = db.relationship('AnalysisResult', backref='submission', uselist=False, cascade='all, delete-orphan')
 
 
 class AnalysisResult(db.Model):
