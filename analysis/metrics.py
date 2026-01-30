@@ -18,16 +18,20 @@ def incremental_score(events):
     if not insert_events:
         return 0.0
     
-    # Count large insertions (>100 chars at once)
-    large_inserts = sum(1 for e in insert_events if e['char_count'] > 100)
+    # Calculate PERCENTAGE OF CHARACTERS from large pastes (not event count!)
+    total_chars = sum(e['char_count'] for e in insert_events)
+    if total_chars == 0:
+        return 0.0
     
-    # Calculate what % are large pastes
-    large_ratio = large_inserts / len(insert_events)
+    large_paste_chars = sum(e['char_count'] for e in insert_events if e['char_count'] > 100)
     
-    # MORE large pastes = LOWER score (this was backwards before!)
-    # 0% large = 10/10
-    # 50% large = 5/10
-    # 100% large = 0/10
+    # Calculate what % of CHARACTERS are from large pastes
+    large_ratio = large_paste_chars / total_chars
+    
+    # MORE pasted characters = LOWER score
+    # 0% pasted = 10/10
+    # 50% pasted = 5/10
+    # 100% pasted = 0/10
     score = (1.0 - large_ratio) * 10
     
     return round(score, 1)
@@ -436,10 +440,11 @@ def generate_detailed_flags(metrics, events, work_patterns):
 def calculate_overall_score(metrics):
     """
     Calculate overall authenticity score (0-10).
+    Applies HARD penalties for obvious cheating indicators.
     
     Returns: float 0.0-10.0
     """
-    # Weight the metrics
+    # Start with weighted average
     score = (
         metrics['incremental_score'] * 0.25 +
         metrics['typing_variance'] * 0.20 +
@@ -448,13 +453,29 @@ def calculate_overall_score(metrics):
         metrics['velocity'].get('score', 0) * 0.15
     )
     
+    # HARD PENALTIES for obvious red flags
+    
+    # If ANY core metric is 0-2, cap overall score at 3
+    if (metrics['incremental_score'] <= 2 or 
+        metrics['typing_variance'] <= 2 or
+        metrics['velocity'].get('score', 10) <= 2):
+        score = min(score, 3.0)
+    
+    # If velocity is insane (>500 chars/min), force score to 0-1 range
+    if metrics['velocity'].get('average_cpm', 0) > 500:
+        score = min(score, 1.0)
+    
     # Penalize for paste bursts
     if metrics['paste_burst_count'] > 5:
         score = score * 0.3
     elif metrics['paste_burst_count'] > 2:
         score = score * 0.6
     
-    return round(score, 1)
+    # If sessions = 0 (one continuous session), penalize
+    if metrics.get('session_consistency', 0) <= 1:
+        score = score * 0.7
+    
+    return round(max(score, 0.0), 1)  # Ensure never negative
 
 
 def analyze_work_patterns(events):
