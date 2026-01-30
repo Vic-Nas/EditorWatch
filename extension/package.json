@@ -2,7 +2,7 @@
   "name": "editorwatch",
   "displayName": "EditorWatch",
   "description": "Code process monitor for programming assignments - making cheating harder than learning",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "vn-tf",
   "icon": "icon.png",
   "repository": {
@@ -12,8 +12,12 @@
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Other"],
-  "activationEvents": ["onStartupFinished"],
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./extension.js",
   "contributes": {
     "commands": [
