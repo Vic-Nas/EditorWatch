@@ -548,6 +548,7 @@ def view_submission_detail(submission_id):
     
     # Generate timeline
     from analysis.event_parser import parse_events_to_timeline, format_timeline_for_display, get_event_summary
+    from analysis.data_export import export_for_llm_analysis, generate_llm_prompt
     timeline = parse_events_to_timeline(events)
     timeline_html = format_timeline_for_display(timeline)
     work_summary = get_event_summary(events)
@@ -561,6 +562,68 @@ def view_submission_detail(submission_id):
                          timeline_html=timeline_html,
                          work_summary=work_summary)
 
+
+# Add these new routes to app.py (add at the end, before if __name__ == '__main__':)
+
+@app.route('/api/submissions/<int:submission_id>/export/json')
+def export_submission_json(submission_id):
+    """Export submission data as clean JSON for LLM analysis"""
+    if 'logged_in' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    from analysis.data_export import export_for_llm_analysis
+    
+    submission = Submission.query.get_or_404(submission_id)
+    analysis = AnalysisResult.query.filter_by(submission_id=submission_id).first()
+    
+    if not analysis:
+        return jsonify({'error': 'Analysis not complete yet'}), 404
+    
+    events = decrypt_data(submission.events_encrypted)
+    
+    # Get file risks from analysis flags
+    flags_data = json.loads(analysis.flags) if analysis.flags else []
+    file_risks = {}
+    # This is a simplified version - the real file_risks come from metrics calculation
+    # but we can reconstruct a basic version from flags
+    
+    data = export_for_llm_analysis(submission, analysis, events, file_risks)
+    
+    return Response(
+        json.dumps(data, indent=2),
+        mimetype='application/json',
+        headers={
+            'Content-Disposition': f'attachment; filename="submission_{submission_id}_data.json"'
+        }
+    )
+
+
+@app.route('/api/submissions/<int:submission_id>/export/prompt')
+def export_submission_prompt(submission_id):
+    """Export LLM-ready prompt for analyzing this submission"""
+    if 'logged_in' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    from analysis.data_export import generate_llm_prompt
+    
+    submission = Submission.query.get_or_404(submission_id)
+    analysis = AnalysisResult.query.filter_by(submission_id=submission_id).first()
+    
+    if not analysis:
+        return jsonify({'error': 'Analysis not complete yet'}), 404
+    
+    events = decrypt_data(submission.events_encrypted)
+    file_risks = {}  # Simplified for now
+    
+    prompt = generate_llm_prompt(submission, analysis, events, file_risks)
+    
+    return Response(
+        prompt,
+        mimetype='text/plain',
+        headers={
+            'Content-Disposition': f'attachment; filename="submission_{submission_id}_llm_prompt.txt"'
+        }
+    )
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
