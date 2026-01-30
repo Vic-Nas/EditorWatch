@@ -3,11 +3,11 @@
   "displayName": "EditorWatch",
   "description": "Code process monitor for programming assignments - making cheating harder than learning",
   "version": "0.1.0",
-  "publisher": "editorwatch",
+  "publisher": "vn-tf",
   "icon": "icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/editorwatch"
+    "url": "https://github.com/Vic-Nas/EditorWatch"
   },
   "engines": {
     "vscode": "^1.85.0"

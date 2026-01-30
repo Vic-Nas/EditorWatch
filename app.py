@@ -1,5 +1,5 @@
 import os
-from flask import Flask, request, jsonify, render_template, redirect, url_for, session
+from flask import Flask, request, jsonify, render_template, redirect, url_for, session, Response
 from models import db, Submission, Assignment, AnalysisResult, init_db
 from cryptography.fernet import Fernet
 import json
@@ -143,6 +143,38 @@ def assignments():
         'deadline': a.deadline.isoformat(),
         'created_at': a.created_at.isoformat()
     } for a in assignments])
+
+
+@app.route('/api/assignments/<assignment_id>/config')
+def download_config(assignment_id):
+    """Download .editorwatch config file for an assignment"""
+    if 'logged_in' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    assignment = Assignment.query.filter_by(assignment_id=assignment_id).first_or_404()
+    
+    # Get server URL from environment or construct from request
+    server_url = os.environ.get('SERVER_URL')
+    if not server_url:
+        # Fallback: construct from current request
+        server_url = request.url_root.rstrip('/')
+    
+    config = {
+        'assignment_id': assignment.assignment_id,
+        'name': assignment.name,
+        'course': assignment.course,
+        'deadline': assignment.deadline.isoformat(),
+        'server': server_url,
+        'track_patterns': json.loads(assignment.track_patterns)
+    }
+    
+    return Response(
+        json.dumps(config, indent=2),
+        mimetype='application/json',
+        headers={
+            'Content-Disposition': 'attachment; filename=.editorwatch'
+        }
+    )
 
 
 @app.route('/api/assignments/<assignment_id>/submissions')
