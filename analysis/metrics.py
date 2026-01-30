@@ -5,8 +5,9 @@ from datetime import datetime
 def incremental_score(events):
     """
     Calculate incremental development score (0-10 scale).
-    Low score = sudden large insertions (suspicious)
-    High score = gradual development (normal)
+    0-3 = SUSPICIOUS (sudden large insertions)
+    4-6 = WARNING (mix of gradual and chunks)
+    7-10 = GOOD (gradual development)
     
     Returns: 0.0 to 10.0
     """
@@ -20,18 +21,24 @@ def incremental_score(events):
     # Count large insertions (>100 chars at once)
     large_inserts = sum(1 for e in insert_events if e['char_count'] > 100)
     
-    # Calculate score (inverse of large insert ratio)
-    raw_score = 1.0 - (large_inserts / len(insert_events))
+    # Calculate what % are large pastes
+    large_ratio = large_inserts / len(insert_events)
     
-    # Convert to 0-10 scale
-    return round(raw_score * 10, 1)
+    # MORE large pastes = LOWER score (this was backwards before!)
+    # 0% large = 10/10
+    # 50% large = 5/10
+    # 100% large = 0/10
+    score = (1.0 - large_ratio) * 10
+    
+    return round(score, 1)
 
 
 def typing_variance(events):
     """
     Calculate variance in typing speed (0-10 scale).
-    Low variance = robotic/pasted (suspicious)
-    High variance = natural human typing (normal)
+    0-3 = SUSPICIOUS (robotic/pasted, too consistent)
+    4-6 = WARNING (somewhat consistent)
+    7-10 = GOOD (natural human variance)
     
     Returns: 0.0 to 10.0
     """
@@ -62,6 +69,9 @@ def typing_variance(events):
     cv = np.sqrt(variance) / mean
     
     # Normalize to 0-10 range
+    # Low CV (consistent) = low score = bad
+    # High CV (varied) = high score = good
+    # Typical human CV is 0.5-2.0, so normalize around that
     raw_score = min(cv / 2.0, 1.0)
     return round(raw_score * 10, 1)
 
@@ -69,8 +79,9 @@ def typing_variance(events):
 def error_correction_ratio(events):
     """
     Calculate ratio of deletions to insertions (0-10 scale).
-    Low ratio = no mistakes/corrections (suspicious)
-    High ratio = natural trial and error (normal)
+    0-3 = SUSPICIOUS (no mistakes, code perfect first time)
+    4-6 = WARNING (few corrections)
+    7-10 = GOOD (natural trial and error)
     
     Returns: 0.0 to 10.0
     """
@@ -85,15 +96,18 @@ def error_correction_ratio(events):
     
     ratio = delete_count / insert_count
     
-    # Normalize (typical ratio is 0.1-0.3, cap at 0.5)
-    raw_score = min(ratio / 0.5, 1.0)
+    # Normalize (typical ratio is 0.15-0.30 for humans)
+    # 0 deletions = 0/10 (suspicious)
+    # 0.15 ratio = 5/10 (borderline)
+    # 0.30+ ratio = 10/10 (good)
+    raw_score = min(ratio / 0.3, 1.0)
     return round(raw_score * 10, 1)
 
 
 def paste_burst_detection(events):
     """
     Detect rapid large insertions (paste bursts).
-    High count = likely copied code (suspicious)
+    Returns count - higher = worse (more suspicious)
     
     Returns: integer count
     """
@@ -115,17 +129,19 @@ def paste_burst_detection(events):
 
 def code_velocity_analysis(events):
     """
-    Analyze typing speed patterns - humans type at 40-80 chars/minute when coding.
-    Sustained speeds > 200 chars/min indicate pasting.
+    Analyze typing speed - creates a 0-10 score where:
+    0-3 = SUSPICIOUS (>200 chars/min sustained = pasting)
+    4-6 = WARNING (100-200 chars/min = fast but possible)
+    7-10 = GOOD (40-80 chars/min = normal human coding)
     
-    Returns: dict with velocity metrics
+    Returns: dict with velocity metrics and score
     """
     if len(events) < 2:
-        return {'average_cpm': 0, 'max_cpm': 0, 'suspicious_bursts': []}
+        return {'average_cpm': 0, 'max_cpm': 0, 'score': 0, 'suspicious_bursts': []}
     
     insert_events = [e for e in events if e['type'] == 'insert']
     if not insert_events:
-        return {'average_cpm': 0, 'max_cpm': 0, 'suspicious_bursts': []}
+        return {'average_cpm': 0, 'max_cpm': 0, 'score': 0, 'suspicious_bursts': []}
     
     # Calculate chars per minute for 30-second windows
     window_size = 30 * 1000  # 30 seconds
@@ -156,18 +172,39 @@ def code_velocity_analysis(events):
         
         current_time += window_size
     
+    avg_cpm = round(sum(velocities) / len(velocities), 1) if velocities else 0
+    max_cpm = round(max(velocities), 1) if velocities else 0
+    
+    # Calculate score based on average speed
+    # 40-80 cpm = 10/10 (perfect human range)
+    # 100-150 cpm = 5/10 (fast but possible)
+    # 200+ cpm = 0/10 (pasting)
+    if avg_cpm <= 80:
+        score = 10.0
+    elif avg_cpm <= 150:
+        # Linear scale from 80->150 maps to 10->5
+        score = 10.0 - ((avg_cpm - 80) / 70) * 5
+    elif avg_cpm <= 200:
+        # Linear scale from 150->200 maps to 5->1
+        score = 5.0 - ((avg_cpm - 150) / 50) * 4
+    else:
+        # >200 = 0
+        score = 0.0
+    
     return {
-        'average_cpm': round(sum(velocities) / len(velocities), 1) if velocities else 0,
-        'max_cpm': round(max(velocities), 1) if velocities else 0,
+        'average_cpm': avg_cpm,
+        'max_cpm': max_cpm,
+        'score': round(score, 1),
         'suspicious_bursts': suspicious_bursts
     }
 
 
 def session_consistency_score(events):
     """
-    Analyze consistency of work sessions (0-10 scale).
-    AI-generated code tends to appear in one or two sessions.
-    Human work shows 3+ sessions with consistent patterns.
+    Analyze work sessions (0-10 scale).
+    0-3 = SUSPICIOUS (1-2 sessions, AI-generated pattern)
+    4-6 = WARNING (2-3 sessions, could be rushed work)
+    7-10 = GOOD (3+ sessions, authentic work pattern)
     
     Returns: 0.0 to 10.0
     """
@@ -190,33 +227,26 @@ def session_consistency_score(events):
     if current_session:
         sessions.append(current_session)
     
-    # Analyze session patterns
-    if len(sessions) < 2:
-        return 0.0
+    num_sessions = len(sessions)
     
-    # Calculate session durations and char counts
-    session_stats = []
-    for session in sessions:
-        duration = (session[-1]['timestamp'] - session[0]['timestamp']) / 1000 / 60
-        chars = sum(e['char_count'] for e in session if e['type'] == 'insert')
-        session_stats.append({'duration': duration, 'chars': chars})
-    
-    # More sessions = more authentic
-    session_score = min(len(sessions) / 5.0, 1.0)
-    
-    # Consistent session sizes = more authentic
-    if len(session_stats) > 1:
-        char_counts = [s['chars'] for s in session_stats if s['chars'] > 0]
-        if char_counts:
-            variance = np.var(char_counts) / (np.mean(char_counts) + 1)
-            consistency_score = min(variance / 2.0, 1.0)
-        else:
-            consistency_score = 0.0
+    # Simple scoring based on session count
+    # 1 session = 0/10
+    # 2 sessions = 3/10
+    # 3 sessions = 6/10
+    # 4 sessions = 8/10
+    # 5+ sessions = 10/10
+    if num_sessions == 1:
+        score = 0.0
+    elif num_sessions == 2:
+        score = 3.0
+    elif num_sessions == 3:
+        score = 6.0
+    elif num_sessions == 4:
+        score = 8.0
     else:
-        consistency_score = 0.0
+        score = 10.0
     
-    raw_score = (session_score + consistency_score) / 2
-    return round(raw_score * 10, 1)
+    return score
 
 
 def file_level_analysis(events):
@@ -299,7 +329,7 @@ def file_level_analysis(events):
 
 def generate_detailed_flags(metrics, events, work_patterns):
     """
-    Generate top 3 most important flags only (simplified).
+    Generate top 3 most important flags only.
     
     Returns: list of flag objects with severity and detailed message
     """
@@ -376,7 +406,7 @@ def generate_detailed_flags(metrics, events, work_patterns):
             'message': f'Almost no corrections (score: {metrics["error_correction_ratio"]}/10)'
         })
     
-    if metrics.get('session_consistency', 0) < 3.0:
+    if metrics.get('session_consistency', 0) < 4.0:
         potential_flags.append({
             'priority': 5,
             'severity': 'medium',
@@ -411,17 +441,18 @@ def calculate_overall_score(metrics):
     """
     # Weight the metrics
     score = (
-        metrics['incremental_score'] * 0.3 +
-        metrics['typing_variance'] * 0.25 +
-        metrics['error_correction_ratio'] * 0.25 +
-        metrics.get('session_consistency', 0) * 0.2
+        metrics['incremental_score'] * 0.25 +
+        metrics['typing_variance'] * 0.20 +
+        metrics['error_correction_ratio'] * 0.20 +
+        metrics.get('session_consistency', 0) * 0.20 +
+        metrics['velocity'].get('score', 0) * 0.15
     )
     
     # Penalize for paste bursts
     if metrics['paste_burst_count'] > 5:
-        score = score * 0.5
+        score = score * 0.3
     elif metrics['paste_burst_count'] > 2:
-        score = score * 0.7
+        score = score * 0.6
     
     return round(score, 1)
 
@@ -475,13 +506,16 @@ def analyze_work_patterns(events):
 def calculate_all_metrics(events):
     """Calculate all metrics and generate comprehensive analysis"""
     # Core metrics (0-10 scale)
+    velocity_data = code_velocity_analysis(events)
+    
     metrics = {
         'incremental_score': incremental_score(events),
         'typing_variance': typing_variance(events),
         'error_correction_ratio': error_correction_ratio(events),
         'paste_burst_count': paste_burst_detection(events),
         'session_consistency': session_consistency_score(events),
-        'velocity': code_velocity_analysis(events),
+        'velocity': velocity_data,
+        'velocity_score': velocity_data.get('score', 0),
         'file_risks': file_level_analysis(events)
     }
     
