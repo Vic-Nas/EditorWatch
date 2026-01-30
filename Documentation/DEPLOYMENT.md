@@ -10,6 +10,14 @@
 # Navigate to your editorwatch directory
 cd editorwatch
 
+# The project is structured for Railway deployment:
+# - app.py and models.py at root (Flask app)
+# - requirements.txt at root (all dependencies)
+# - Procfile at root (tells Railway how to run)
+# - templates/ at root (HTML files)
+# - analysis/ subdirectory (worker code)
+# - extension/ subdirectory (VS Code extension - not deployed to Railway)
+
 # Initialize git (if not already done)
 git init
 

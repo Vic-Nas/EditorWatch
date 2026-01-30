@@ -27,7 +27,7 @@ editorwatch/
 
 **Backend:**
 ```bash
-cd backend
+# From project root (editorwatch/)
 pip install -r requirements.txt
 export DATABASE_URL="sqlite:///editorwatch.db"
 export SECRET_KEY="your-secret-key"

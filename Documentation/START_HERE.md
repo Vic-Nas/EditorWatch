@@ -37,36 +37,36 @@ A complete, production-ready academic integrity monitoring system in **~1000 lin
 
 ```
 editorwatch/
-├── extension/              # VS Code extension
-│   ├── package.json       # Extension manifest
-│   ├── extension.js       # Main logic (~150 lines)
-│   └── .vscodeignore      # Publishing exclusions
+├── app.py                 # Flask server (at root for Railway)
+├── models.py              # Database models
+├── requirements.txt       # All Python dependencies
+├── Procfile              # Railway deployment config
+├── railway.json          # Railway settings
+├── runtime.txt           # Python version
+├── .gitignore           # Git exclusions
+├── example.editorwatch  # Sample assignment config
+├── test.sh              # Local testing script
 │
-├── backend/               # Flask API
-│   ├── app.py            # Main server (~200 lines)
-│   ├── models.py         # Database models (~100 lines)
-│   ├── requirements.txt  # Python dependencies
-│   └── templates/        # HTML templates
-│       ├── login.html
-│       └── dashboard.html
+├── templates/            # Flask HTML templates (at root)
+│   ├── login.html
+│   └── dashboard.html
 │
 ├── analysis/             # Metrics & visualization
 │   ├── metrics.py        # Pattern detection (~150 lines)
 │   ├── visualizer.py     # Plotly charts (~100 lines)
 │   └── worker.py         # Background jobs (~50 lines)
 │
-├── Procfile              # Railway deployment config
-├── railway.json          # Railway settings
-├── requirements.txt      # All Python deps
-├── .gitignore           # Git exclusions
-├── example.editorwatch  # Sample assignment config
-├── test.sh              # Local testing script
+├── extension/            # VS Code extension (separate deployment)
+│   ├── package.json      # Extension manifest
+│   ├── extension.js      # Main logic (~150 lines)
+│   └── .vscodeignore     # Publishing exclusions
 │
 └── Documentation/
     ├── README.md          # Quick start guide
     ├── DEPLOYMENT.md      # Complete deployment walkthrough
-    ├── ARCHITECTURE.md    # Original design doc (from your files)
-    └── LICENSE.md         # Dual-license terms (from your files)
+    ├── START_HERE.md      # This file
+    ├── ARCHITECTURE.md    # Original design doc
+    └── LICENSE.md         # Dual-license terms
 ```
 
 ## 🚀 Three Steps to Launch
@@ -199,8 +199,7 @@ Total:                    ~950 lines ✅
 
 # Or manually:
 
-# Terminal 1: Backend
-cd backend
+# Terminal 1: Backend (from project root)
 pip install -r requirements.txt
 export DATABASE_URL="sqlite:///test.db"
 export SECRET_KEY="test"
@@ -215,7 +214,6 @@ npm install
 
 # Terminal 3: Worker (optional, needs Redis)
 redis-server &
-cd analysis
 python -m rq.worker analysis
 ```
 

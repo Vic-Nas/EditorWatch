@@ -1,12 +1,9 @@
 import os
 import sys
 
-# Add parent directory to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
-
 from models import db, Submission, AnalysisResult
-from metrics import calculate_all_metrics
-from visualizer import create_timeline, create_activity_heatmap
+from analysis.metrics import calculate_all_metrics
+from analysis.visualizer import create_timeline, create_activity_heatmap
 from app import app, decrypt_data
 
 
