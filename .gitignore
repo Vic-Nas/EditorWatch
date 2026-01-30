@@ -49,7 +49,7 @@ npm-debug.log*
 
 # Extension node_modules (if you have extension/ in root)
 extension/node_modules/
-extension/*.vsix
+*.vsix
 extension/out/
 extension/dist/
 
