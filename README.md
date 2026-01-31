@@ -1,5 +1,7 @@
 # EditorWatch
 
+[live server](https://editorwatch.up.railway.app/)
+
 **Code authenticity monitor for programming assignments** - Track how students write code, not just what they write.
 
 ## Quick Deploy
