@@ -374,15 +374,8 @@ def assignments():
                 db.session.add(student_code)
                 
                 # Queue sending email so assignment creation doesn't block
-                try:
-                    job = task_queue.enqueue(send_code_email, email, code, assignment.name)
-                    # consider it sent if job was created
-                    email_sent = bool(job)
-                    if email_sent:
-                        codes_sent += 1
-                except Exception as e:
-                    logger.warning(f"Failed to enqueue email to {email}: {e}")
-                    email_sent = False
+                # SMTP sending removed: professor will send codes manually via mailto links
+                email_sent = False
                 
                 students_with_codes.append({
                     'email': email,
@@ -500,6 +493,92 @@ def download_codes_csv(assignment_id):
         mimetype='text/csv',
         headers={'Content-Disposition': f'attachment; filename="{assignment_id}_codes.csv"'}
     )
+
+
+@app.route('/api/assignments/<assignment_id>/codes.json')
+def download_codes_json(assignment_id):
+    """Download codes as JSON"""
+    if 'logged_in' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    assignment = Assignment.query.filter_by(assignment_id=assignment_id).first_or_404()
+    current_admin = None
+    if session.get('admin_username'):
+        current_admin = Admin.query.filter_by(username=session.get('admin_username')).first()
+    if not current_admin or assignment.owner_id != current_admin.id:
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    students = StudentCode.query.filter_by(assignment_id=assignment_id).all()
+    students_data = [{
+        'email': s.email,
+        'first_name': s.first_name or '',
+        'last_name': s.last_name or '',
+        'code': s.code
+    } for s in students]
+
+    return Response(
+        json.dumps(students_data, indent=2),
+        mimetype='application/json',
+        headers={'Content-Disposition': f'attachment; filename="{assignment_id}_codes.json"'}
+    )
+
+
+@app.route('/assignments/<assignment_id>/mailtos')
+def assignment_mailtos(assignment_id):
+    """Render an HTML page with editable message template and mailto links for each student"""
+    if 'logged_in' not in session:
+        return redirect(url_for('login'))
+
+    assignment = Assignment.query.filter_by(assignment_id=assignment_id).first_or_404()
+    current_admin = None
+    if session.get('admin_username'):
+        current_admin = Admin.query.filter_by(username=session.get('admin_username')).first()
+    if not current_admin or assignment.owner_id != current_admin.id:
+        return "Unauthorized", 403
+
+    students = StudentCode.query.filter_by(assignment_id=assignment_id).all()
+    students_data = [{
+        'email': s.email,
+        'first_name': s.first_name or '',
+        'last_name': s.last_name or '',
+        'code': s.code
+    } for s in students]
+
+    # Simple HTML page returned directly
+    subject = f"EditorWatch Code - {assignment.name}"
+    default_body = "Your EditorWatch access code for '{assignment_name}':\n\n{code}\n\nEnter this code in VS Code when prompted to enable monitoring.".format(assignment_name=assignment.name)
+
+    html = ['<!DOCTYPE html><html><head><meta charset="utf-8"><title>Mailto - ' + assignment.name + '</title></head><body>']
+    html.append('<h1>Send Codes for ' + assignment.name + '</h1>')
+    html.append('<p>Edit the message and click each email to open the mail client.</p>')
+    html.append('<label>Subject:</label><br><input id="subject" style="width:80%" value="' + subject + '"><br>')
+    html.append('<label>Body template (use {first_name}, {last_name}, {code}):</label><br>')
+    html.append('<textarea id="body" style="width:80%;height:160px">' + default_body + '</textarea><br><br>')
+    html.append('<div>')
+    for s in students_data:
+        esc_email = s['email']
+        html.append('<div style="margin:6px 0;"><a class="mailto" href="#" data-email="' + esc_email + '" data-code="' + s['code'] + '" data-first="' + s['first_name'] + '" data-last="' + s['last_name'] + '">' + esc_email + '</a></div>')
+    html.append('</div>')
+    html.append('''
+<script>
+document.querySelectorAll('.mailto').forEach(function(el){
+  el.addEventListener('click', function(e){
+    e.preventDefault();
+    var email = el.dataset.email;
+    var code = el.dataset.code;
+    var first = el.dataset.first;
+    var last = el.dataset.last;
+    var subject = document.getElementById('subject').value;
+    var body = document.getElementById('body').value;
+    body = body.replace(/{code}/g, code).replace(/{first_name}/g, first).replace(/{last_name}/g, last);
+    var href = 'mailto:' + encodeURIComponent(email) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+    window.location.href = href;
+  });
+});
+</script>
+''')
+    html.append('</body></html>')
+    return Response('\n'.join(html), mimetype='text/html')
 
 
 @app.route('/api/assignments/<assignment_id>/config')

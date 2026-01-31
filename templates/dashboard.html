@@ -247,6 +247,8 @@ charlie@uni.edu,Charlie,Brown"></textarea>
                                 '<td>' +
                                 '<a href="/api/assignments/' + a.assignment_id + '/config" class="btn btn-small btn-secondary" download>⬇ Config</a> ' +
                                 '<a href="/api/assignments/' + a.assignment_id + '/codes.csv" class="btn btn-small btn-secondary" download>📋 Codes CSV</a> ' +
+                                '<a href="/api/assignments/' + a.assignment_id + '/codes.json" class="btn btn-small btn-secondary" download>📥 Codes JSON</a> ' +
+                                '<a href="/assignments/' + a.assignment_id + '/mailtos" class="btn btn-small" target="_blank">✉️ Mail Composer</a> ' +
                                 '<button class="btn btn-small" onclick="viewSubmissions(\'' + a.assignment_id + '\')">View</button> ' +
                                 '<a href="/assignments/' + a.assignment_id + '/graph" class="btn btn-small" target="_blank">Graph</a> ' +
                                 '<button class="btn btn-small btn-danger" onclick="deleteAssignment(\'' + a.assignment_id + '\')">Delete</button>' +
