@@ -215,8 +215,9 @@ def _ensure_current_admin():
             admin = Admin(username=env_user, password_hash=generate_password_hash(pwd))
             db.session.add(admin)
             db.session.commit()
-        # ensure session tracks this admin
-        session['admin_username'] = admin.username
+        # Do NOT automatically write the env admin into the session here.
+        # Session should only be set during an explicit login to avoid unintentionally
+        # granting env-admin privileges to other users or API callers.
         return admin
 
     return None
@@ -449,10 +450,26 @@ def delete_assignment(assignment_id):
     if not current_admin or assignment.owner_id != current_admin.id:
         return jsonify({'error': 'Unauthorized'}), 403
 
-    StudentCode.query.filter_by(assignment_id=assignment_id).delete()
-    Submission.query.filter_by(assignment_id=assignment_id).delete()
-    db.session.delete(assignment)
-    db.session.commit()
+    try:
+        # Delete analysis results for submissions of this assignment first to avoid
+        # foreign key violations (Postgres enforces FK constraints on bulk deletes).
+        from sqlalchemy.exc import SQLAlchemyError
+
+        # Delete AnalysisResult rows that reference submissions for this assignment
+        AnalysisResult.query.join(Submission).filter(Submission.assignment_id == assignment_id).delete(synchronize_session=False)
+
+        # Now delete submissions and student codes
+        Submission.query.filter_by(assignment_id=assignment_id).delete(synchronize_session=False)
+        StudentCode.query.filter_by(assignment_id=assignment_id).delete(synchronize_session=False)
+
+        # Finally delete the assignment row
+        db.session.delete(assignment)
+        db.session.commit()
+
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        logger.exception(f"Failed to delete assignment {assignment_id}: {e}")
+        return jsonify({'error': 'Failed to delete assignment due to database constraint.'}), 500
 
     logger.info(f"Deleted assignment {assignment_id}")
     return jsonify({'success': True})
