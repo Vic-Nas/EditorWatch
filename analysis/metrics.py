@@ -1,6 +1,9 @@
 import numpy as np
 from datetime import datetime
 
+# Message rendering helper (centralized templates)
+from .messages import render as render_message
+
 
 def incremental_score(events):
     """
@@ -15,7 +18,7 @@ def incremental_score(events):
         return 0.0
     
     insert_events = [e for e in events if e['type'] == 'insert']
-    if not insert_events:
+    if not insert_events or len(insert_events) == 0:
         return 0.0
     
     # Calculate PERCENTAGE OF CHARACTERS from large pastes (not event count!)
@@ -60,14 +63,14 @@ def typing_variance(events):
         if time_diff > 0:
             intervals.append(time_diff)
     
-    if not intervals:
+    if not intervals or len(intervals) < 2:
         return 0.0
     
     # Calculate coefficient of variation (normalized variance)
     variance = np.var(intervals)
     mean = np.mean(intervals)
     
-    if mean == 0:
+    if mean == 0 or variance == 0:
         return 0.0
     
     cv = np.sqrt(variance) / mean
@@ -355,35 +358,36 @@ def generate_detailed_flags(metrics, events, work_patterns):
             'priority': 10,
             'severity': 'high',
             'category': 'Code Origin',
-            'message': f'{paste_percentage:.0f}% of code pasted in blocks rather than typed gradually'
+            'message': render_message('paste_percentage', paste_percentage=paste_percentage)
         })
-    
+
     if active_time < 10 and total_chars > 500:
         potential_flags.append({
             'priority': 10,
             'severity': 'high',
             'category': 'Time Analysis',
-            'message': f'Entire submission completed in {active_time:.1f} minutes'
+            'message': render_message('completed_quickly', active_time=active_time)
         })
-    
+
     if velocity.get('average_cpm', 0) > 150:
         potential_flags.append({
             'priority': 10,
             'severity': 'high',
             'category': 'Typing Speed',
-            'message': f'{velocity["average_cpm"]:.0f} chars/min typing speed (human: 40-80 chars/min)'
+            'message': render_message('high_typing_speed', average_cpm=velocity.get('average_cpm', 0))
         })
     
     # File-specific critical issues (priority 9)
     high_risk_files = [f for f, data in file_risks.items() if data['risk'] == 'high']
     if high_risk_files:
         for f in high_risk_files[:1]:  # Only first file
-            potential_flags.append({
-                'priority': 9,
-                'severity': 'high',
-                'category': 'File Analysis',
-                'message': f'{f}: {"; ".join(file_risks[f]["issues"])}'
-            })
+                issues = '; '.join(file_risks[f].get('issues', []))
+                potential_flags.append({
+                    'priority': 9,
+                    'severity': 'high',
+                    'category': 'File Analysis',
+                    'message': render_message('file_risks', file=f, issues=issues)
+                })
     
     # WARNING FLAGS (priority 5)
     if metrics['incremental_score'] < 4.0:
@@ -391,7 +395,7 @@ def generate_detailed_flags(metrics, events, work_patterns):
             'priority': 5,
             'severity': 'medium',
             'category': 'Development Pattern',
-            'message': f'Code appeared in chunks (score: {metrics["incremental_score"]}/10)'
+                'message': render_message('chunks_appeared', incremental_score=metrics['incremental_score'])
         })
     
     if metrics['typing_variance'] < 3.0:
@@ -399,7 +403,7 @@ def generate_detailed_flags(metrics, events, work_patterns):
             'priority': 5,
             'severity': 'medium',
             'category': 'Typing Behavior',
-            'message': f'Robotic typing patterns (variance: {metrics["typing_variance"]}/10)'
+                'message': render_message('robotic_typing', typing_variance=metrics['typing_variance'])
         })
     
     if metrics['error_correction_ratio'] < 2.0 and total_chars > 200:
@@ -407,7 +411,7 @@ def generate_detailed_flags(metrics, events, work_patterns):
             'priority': 5,
             'severity': 'medium',
             'category': 'Error Correction',
-            'message': f'Almost no corrections (score: {metrics["error_correction_ratio"]}/10)'
+                'message': render_message('few_corrections', error_correction_ratio=metrics['error_correction_ratio'])
         })
     
     if metrics.get('session_consistency', 0) < 4.0:
@@ -415,7 +419,7 @@ def generate_detailed_flags(metrics, events, work_patterns):
             'priority': 5,
             'severity': 'medium',
             'category': 'Work Sessions',
-            'message': f'Very few work sessions (score: {metrics.get("session_consistency", 0)}/10)'
+                'message': render_message('few_sessions', session_consistency=metrics.get('session_consistency', 0))
         })
     
     # Sort by priority and take top 3
@@ -427,12 +431,12 @@ def generate_detailed_flags(metrics, events, work_patterns):
         flag.pop('priority', None)
     
     # If no flags, add positive indicator
-    if not flags:
-        flags.append({
-            'severity': 'none',
-            'category': 'Assessment',
-            'message': 'No suspicious patterns detected - work appears authentic'
-        })
+        if not flags:
+            flags.append({
+                'severity': 'none',
+                'category': 'Assessment',
+                'message': render_message('no_suspicious')
+            })
     
     return flags
 
