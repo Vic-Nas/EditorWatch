@@ -522,7 +522,8 @@ def assignment_mailtos(assignment_id):
 
     # Simple HTML page returned directly
     subject = f"EditorWatch Code - {assignment.name}"
-    default_body = "Your EditorWatch access code for '{assignment_name}':\n\n{code}\n\nEnter this code in VS Code when prompted to enable monitoring.".format(assignment_name=assignment.name)
+    # Keep placeholders like {code}, {first_name}, {last_name} literal for client-side substitution.
+    default_body = f"Your EditorWatch access code for '{assignment.name}':\n\n{{code}}\n\nEnter this code in VS Code when prompted to enable monitoring."
 
     html = ['<!DOCTYPE html><html><head><meta charset="utf-8"><title>Mailto - ' + assignment.name + '</title></head><body>']
     html.append('<h1>Send Codes for ' + assignment.name + '</h1>')
