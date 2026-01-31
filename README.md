@@ -7,7 +7,7 @@
 ### Option 1: Railway (Recommended - Free Tier Available)
 
 1. Fork this repo
-2. Go to [Railway.app](https://railway.app) → New Project → Deploy from GitHub
+2. Go to [Railway.app](https://railway.com?referralCode=ZIdvo-) → New Project → Deploy from GitHub
 3. Add these environment variables:
    ```
    DATABASE_URL=<railway-postgres-url>
