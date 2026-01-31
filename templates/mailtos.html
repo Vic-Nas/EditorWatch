@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mailto - {{ assignment_name }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+      body { padding: 24px; background:#f8f9fa; }
+      .mailto-list a { display:block; padding:8px 12px; border-radius:6px; background:#fff; color:#0b5ed7; text-decoration:none; box-shadow:0 1px 2px rgba(0,0,0,0.04); }
+      .mailto-list a:hover { background:#eef5ff; text-decoration:underline; }
+      .controls { gap:8px; }
+      .card { max-width:1000px; margin:auto; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="card-body">
+        <h3 class="card-title">Send Codes for {{ assignment_name }}</h3>
+        <p class="text-muted">Edit the message and click each email to open the mail client.</p>
+
+        <div class="mb-3">
+          <label class="form-label">Subject</label>
+          <input id="subject" class="form-control" value="{{ subject }}">
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">Body template (use {first_name}, {last_name}, {code})</label>
+          <textarea id="body" class="form-control" rows="6">{{ default_body }}</textarea>
+        </div>
+
+        <div class="mb-3 d-flex controls">
+          <button id="openAll" class="btn btn-primary">Open All Drafts</button>
+          <button id="bccAll" class="btn btn-outline-secondary">One Email (BCC)</button>
+          <a href="{{ url_for('download_codes_csv', assignment_id=assignment_id) }}" class="btn btn-outline-dark">Download CSV</a>
+        </div>
+
+        <div class="mailto-list mt-3" id="list">
+          {% for s in students %}
+            <div class="mb-2"><a class="mailto" href="#" data-email="{{ s.email }}" data-code="{{ s.code }}" data-first="{{ s.first_name }}" data-last="{{ s.last_name }}">{{ s.email }}</a></div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <script>
+      function enc(s){ return encodeURIComponent(s); }
+
+      document.getElementById('openAll').addEventListener('click', function(e){
+        var items = document.querySelectorAll('.mailto');
+        var subject = document.getElementById('subject').value;
+        var template = document.getElementById('body').value;
+        var opened = 0;
+        try{
+          for(var i=0;i<items.length;i++){
+            var el = items[i];
+            var email = el.dataset.email;
+            var code = el.dataset.code;
+            var first = el.dataset.first || '';
+            var last = el.dataset.last || '';
+            var body = template.replace(/\{code\}/g, code).replace(/\{first_name\}/g, first).replace(/\{last_name\}/g, last);
+            var href = 'mailto:' + enc(email) + '?subject=' + enc(subject) + '&body=' + enc(body);
+            // open synchronously inside user-initiated handler to avoid popup blockers
+            window.open(href, '_blank');
+            opened++;
+          }
+        }catch(err){
+          if(opened===0){
+            alert('Your browser blocked opening draft windows. Try clicking individual addresses instead or use the BCC option.');
+          }
+        }
+      });
+
+      document.getElementById('bccAll').addEventListener('click', function(){
+        var items = document.querySelectorAll('.mailto');
+        var subject = document.getElementById('subject').value;
+        var template = document.getElementById('body').value;
+        var bccs = [];
+        var codeLines = [];
+        items.forEach(function(el){
+          bccs.push(el.dataset.email);
+          var code = el.dataset.code;
+          var first = el.dataset.first||'';
+          var last = el.dataset.last||'';
+          var name = (first || last) ? (first + ' ' + last).trim() : el.dataset.email;
+          codeLines.push(name + ': ' + code);
+        });
+        var body = template + '\n\n' + codeLines.join('\n');
+        var href = 'mailto:?bcc=' + enc(bccs.join(',')) + '&subject=' + enc(subject) + '&body=' + enc(body);
+        window.location.href = href;
+      });
+
+      document.querySelectorAll('.mailto').forEach(function(el){
+        el.addEventListener('click', function(e){
+          e.preventDefault();
+          var email = el.dataset.email;
+          var code = el.dataset.code;
+          var first = el.dataset.first||'';
+          var last = el.dataset.last||'';
+          var subject = document.getElementById('subject').value;
+          var body = document.getElementById('body').value;
+          body = body.replace(/\{code\}/g, code).replace(/\{first_name\}/g, first).replace(/\{last_name\}/g, last);
+          var href = 'mailto:' + enc(email) + '?subject=' + enc(subject) + '&body=' + enc(body);
+          window.location.href = href;
+        });
+      });
+    </script>
+  </body>
+</html>
