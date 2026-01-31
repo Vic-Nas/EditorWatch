@@ -529,17 +529,17 @@ def assignment_mailtos(assignment_id):
     html.append('<h1>Send Codes for ' + assignment.name + '</h1>')
     html.append('<p>Edit the message and click each email to open the mail client.</p>')
     html.append('<label>Subject:</label><br><input id="subject" style="width:80%" value="' + subject + '"><br>')
-        html.append('<label>Body template (use {first_name}, {last_name}, {code}):</label><br>')
-        html.append('<textarea id="body" style="width:80%;height:160px">' + default_body + '</textarea><br><br>')
-        # Quick actions: open all individual drafts or compose one BCC email including all codes
-        html.append('<button id="openAll" style="margin-right:8px">Open All Drafts</button>')
-        html.append('<button id="bccAll">One Email (BCC)</button><br><br>')
-        html.append('<div id="list">')
-        for s in students_data:
-                esc_email = s['email']
-                html.append('<div style="margin:6px 0;"><a class="mailto" href="#" data-email="' + esc_email + '" data-code="' + s['code'] + '" data-first="' + s['first_name'] + '" data-last="' + s['last_name'] + '">' + esc_email + '</a></div>')
-        html.append('</div>')
-        html.append('''
+    html.append('<label>Body template (use {first_name}, {last_name}, {code}):</label><br>')
+    html.append('<textarea id="body" style="width:80%;height:160px">' + default_body + '</textarea><br><br>')
+    # Quick actions: open all individual drafts or compose one BCC email including all codes
+    html.append('<button id="openAll" style="margin-right:8px">Open All Drafts</button>')
+    html.append('<button id="bccAll">One Email (BCC)</button><br><br>')
+    html.append('<div id="list">')
+    for s in students_data:
+        esc_email = s['email']
+        html.append('<div style="margin:6px 0;"><a class="mailto" href="#" data-email="' + esc_email + '" data-code="' + s['code'] + '" data-first="' + s['first_name'] + '" data-last="' + s['last_name'] + '">' + esc_email + '</a></div>')
+    html.append('</div>')
+    html.append('''
 <script>
 function encode(s){ return encodeURIComponent(s); }
 
