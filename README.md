@@ -17,7 +17,7 @@
    ADMIN_PASSWORD=<your-password>
    ```
 4. Railway auto-detects the Procfile and deploys both web + worker
-
+![Image description](https://dev-to-uploads.s3.amazonaws.com/uploads/articles/12t02pxi2zupbis816re.png)
 ### Option 2: Your Own Server
 
 ```bash
