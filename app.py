@@ -475,10 +475,13 @@ def assignment_graph(assignment_id):
         if student_code and student_code.first_name:
             student_name = f"{student_code.first_name} {student_code.last_name}".strip()
 
+        # include analysis overall_score if available so we can graph authenticity
+        analysis = AnalysisResult.query.filter_by(submission_id=sub.id).first()
         students.append({
             'id': sub.id,
             'label': student_name,
-            'files': files
+            'files': files,
+            'overall_score': analysis.overall_score if analysis else None
         })
 
     # Build nodes and pairwise Jaccard edges

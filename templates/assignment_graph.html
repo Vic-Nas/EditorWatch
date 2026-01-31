@@ -17,6 +17,12 @@
 
   <div id="network"></div>
   <div class="legend">
+    <div style="margin-bottom:8px;">
+      <strong>Node color:</strong>
+      <span style="display:inline-block; width:14px; height:14px; background:#2ecc71; margin-left:8px; border:1px solid #ccc;"></span> Likely Authentic
+      <span style="display:inline-block; width:14px; height:14px; background:#f39c12; margin-left:8px; border:1px solid #ccc;"></span> Needs Review
+      <span style="display:inline-block; width:14px; height:14px; background:#e74c3c; margin-left:8px; border:1px solid #ccc;"></span> Suspicious
+    </div>
     <label>Similarity threshold: <input id="threshold" type="range" min="0" max="1" step="0.01" value="0.5"/></label>
     <span id="thresholdValue">0.50</span>
   </div>
@@ -26,7 +32,16 @@
   <script>
     const data = {{ graph_data|tojson }};
 
-    const nodes = new vis.DataSet(data.nodes.map(n => ({ id: n.id, label: n.label })));
+    // create nodes using students so we can visualize per-student authenticity scores
+    const nodes = new vis.DataSet(data.students.map(s => {
+      const score = (s.overall_score !== null && s.overall_score !== undefined) ? s.overall_score : null;
+      let color = '#95a5a6';
+      if (score !== null) {
+        color = score >= 7 ? '#2ecc71' : (score >= 4 ? '#f39c12' : '#e74c3c');
+      }
+      const size = score !== null ? (12 + Math.max(0, score) * 2) : 10;
+      return { id: s.id, label: s.label, title: `Authenticity: ${score !== null ? score.toFixed(2) : 'N/A'}`, color, value: score, size };
+    }));
     const edges = new vis.DataSet(data.edges.map(e => ({ from: e.from, to: e.to, value: e.weight })));
 
     const container = document.getElementById('network');
@@ -42,8 +57,13 @@
     function renderInfo(studentId) {
       const s = data.students.find(x => x.id === studentId);
       if (!s) return;
+      const score = (s.overall_score !== null && s.overall_score !== undefined) ? s.overall_score : null;
+      const category = score === null ? 'No score' : (score >= 7 ? 'Likely Authentic' : (score >= 4 ? 'Needs Review' : 'Suspicious'));
       const el = document.getElementById('info');
-      el.innerHTML = `<h3>${s.label}</h3><p><strong>Files edited (${s.files.length}):</strong></p><ul>${s.files.map(f=>`<li>${f}</li>`).join('')}</ul>`;
+      el.innerHTML = `<h3>${s.label}</h3>
+        <p><strong>Authenticity:</strong> ${score !== null ? score.toFixed(2) : 'N/A'} — <em>${category}</em></p>
+        <p><strong>Files edited (${s.files.length}):</strong></p>
+        <ul>${s.files.map(f=>`<li>${f}</li>`).join('')}</ul>`;
     }
 
     network.on('click', function(params) {
