@@ -23,6 +23,10 @@ class Assignment(db.Model):
     deadline = db.Column(db.DateTime, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
+    # Ownership: assignments are owned by an Admin
+    owner_id = db.Column(db.Integer, db.ForeignKey('admins.id'), nullable=True)
+    owner = db.relationship('Admin', backref='assignments')
+
     submissions = db.relationship('Submission', backref='assignment', lazy=True, cascade='all, delete-orphan')
     student_codes = db.relationship('StudentCode', backref='assignment', lazy=True, cascade='all, delete-orphan')
 

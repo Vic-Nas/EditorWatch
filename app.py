@@ -162,11 +162,22 @@ def login():
             admin = Admin.query.filter_by(username=username).first()
             if admin and check_password_hash(admin.password_hash, password):
                 session['logged_in'] = True
+                session['admin_username'] = username
+                session['is_env_admin'] = False
                 return redirect(url_for('index'))
 
             # fallback to environment credentials
             if (username == ADMIN_USERNAME and password == ADMIN_PASSWORD):
+                # ensure there's an Admin row for this env admin so ownership works
+                admin = Admin.query.filter_by(username=username).first()
+                if not admin:
+                    admin = Admin(username=username, password_hash=generate_password_hash(password))
+                    db.session.add(admin)
+                    db.session.commit()
+
                 session['logged_in'] = True
+                session['admin_username'] = username
+                session['is_env_admin'] = True
                 return redirect(url_for('index'))
 
         return render_template('login.html', error='Invalid credentials')
@@ -287,7 +298,10 @@ def assignments():
                 course=data.get('course', ''),
                 name=data['name'],
                 track_patterns=json.dumps(data.get('track_patterns', ['*.py', '*.js'])),
-                deadline=datetime.fromisoformat(data['deadline'])
+                deadline=datetime.fromisoformat(data['deadline']),
+                owner_id=(Admin.query.filter_by(username=session.get('admin_username')).first().id
+                          if session.get('admin_username') and Admin.query.filter_by(username=session.get('admin_username')).first()
+                          else None)
             )
             db.session.add(assignment)
             db.session.commit()
@@ -350,7 +364,17 @@ def assignments():
             return jsonify({'error': str(e)}), 500
     
     # GET - list assignments
-    assignments = Assignment.query.all()
+    # Determine current admin from session
+    current_admin = None
+    if session.get('admin_username'):
+        current_admin = Admin.query.filter_by(username=session.get('admin_username')).first()
+
+    # If an env admin logged in, they should have an Admin row (created at login), treat as admin
+    if current_admin:
+        assignments = Assignment.query.filter_by(owner_id=current_admin.id).all()
+    else:
+        # Fallback: no admin in session — return all (shouldn't normally happen)
+        assignments = Assignment.query.all()
     result = []
     
     for a in assignments:
@@ -379,12 +403,20 @@ def delete_assignment(assignment_id):
         return jsonify({'error': 'Unauthorized'}), 401
     
     assignment = Assignment.query.filter_by(assignment_id=assignment_id).first_or_404()
-    
+
+    # enforce ownership: only owner (or env admin that was turned into Admin) can delete
+    current_admin = None
+    if session.get('admin_username'):
+        current_admin = Admin.query.filter_by(username=session.get('admin_username')).first()
+
+    if not current_admin or assignment.owner_id != current_admin.id:
+        return jsonify({'error': 'Unauthorized'}), 403
+
     StudentCode.query.filter_by(assignment_id=assignment_id).delete()
     Submission.query.filter_by(assignment_id=assignment_id).delete()
     db.session.delete(assignment)
     db.session.commit()
-    
+
     logger.info(f"Deleted assignment {assignment_id}")
     return jsonify({'success': True})
 
@@ -396,6 +428,18 @@ def download_codes_csv(assignment_id):
         return jsonify({'error': 'Unauthorized'}), 401
     
     assignment = Assignment.query.filter_by(assignment_id=assignment_id).first_or_404()
+    # enforce ownership
+    current_admin = None
+    if session.get('admin_username'):
+        current_admin = Admin.query.filter_by(username=session.get('admin_username')).first()
+    if not current_admin or assignment.owner_id != current_admin.id:
+        return jsonify({'error': 'Unauthorized'}), 403
+    # enforce ownership
+    current_admin = None
+    if session.get('admin_username'):
+        current_admin = Admin.query.filter_by(username=session.get('admin_username')).first()
+    if not current_admin or assignment.owner_id != current_admin.id:
+        return jsonify({'error': 'Unauthorized'}), 403
     students = StudentCode.query.filter_by(assignment_id=assignment_id).all()
     
     students_data = [{
@@ -418,6 +462,12 @@ def download_codes_csv(assignment_id):
 def download_config(assignment_id):
     """Download .editorwatch config file"""
     assignment = Assignment.query.filter_by(assignment_id=assignment_id).first_or_404()
+    # enforce ownership
+    current_admin = None
+    if session.get('admin_username'):
+        current_admin = Admin.query.filter_by(username=session.get('admin_username')).first()
+    if not current_admin or assignment.owner_id != current_admin.id:
+        return jsonify({'error': 'Unauthorized'}), 403
     
     server_url = os.environ.get('SERVER_URL')
     if not server_url:
@@ -449,6 +499,14 @@ def get_submissions(assignment_id):
     if 'logged_in' not in session:
         return jsonify({'error': 'Unauthorized'}), 401
     
+    assignment = Assignment.query.filter_by(assignment_id=assignment_id).first_or_404()
+    # enforce ownership
+    current_admin = None
+    if session.get('admin_username'):
+        current_admin = Admin.query.filter_by(username=session.get('admin_username')).first()
+    if not current_admin or assignment.owner_id != current_admin.id:
+        return jsonify({'error': 'Unauthorized'}), 403
+
     submissions = Submission.query.filter_by(assignment_id=assignment_id).all()
     results = []
     
