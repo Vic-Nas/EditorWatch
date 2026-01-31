@@ -351,10 +351,12 @@ def assignments():
                 try:
                     job = task_queue.enqueue(send_code_email, email, code, assignment.name)
                     # consider it sent if job was created
-                    if job:
+                    email_sent = bool(job)
+                    if email_sent:
                         codes_sent += 1
                 except Exception as e:
                     logger.warning(f"Failed to enqueue email to {email}: {e}")
+                    email_sent = False
                 
                 students_with_codes.append({
                     'email': email,
