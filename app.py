@@ -196,6 +196,32 @@ def login():
     return render_template('login.html')
 
 
+def _ensure_current_admin():
+    """Return Admin instance for current session or environment fallback; create if missing."""
+    username = session.get('admin_username')
+    if username:
+        admin = Admin.query.filter_by(username=username).first()
+        if admin:
+            return admin
+
+    # Fallback to env admin
+    env_user = os.environ.get('ADMIN_USERNAME')
+    env_pass = os.environ.get('ADMIN_PASSWORD')
+    if env_user:
+        admin = Admin.query.filter_by(username=env_user).first()
+        if not admin:
+            # create admin from env credentials if available
+            pwd = env_pass or secrets.token_hex(8)
+            admin = Admin(username=env_user, password_hash=generate_password_hash(pwd))
+            db.session.add(admin)
+            db.session.commit()
+        # ensure session tracks this admin
+        session['admin_username'] = admin.username
+        return admin
+
+    return None
+
+
 @app.route('/logout')
 def logout():
     session.pop('logged_in', None)
@@ -305,15 +331,15 @@ def assignments():
             course_prefix = data.get('course', 'COURSE').replace(' ', '').upper()[:10]
             assignment_id = f"{course_prefix}_{secrets.token_hex(4)}"
             
+            # Ensure assignment has an owner (current admin or env fallback)
+            current_admin = _ensure_current_admin()
             assignment = Assignment(
                 assignment_id=assignment_id,
                 course=data.get('course', ''),
                 name=data['name'],
                 track_patterns=json.dumps(data.get('track_patterns', ['*.py', '*.js'])),
                 deadline=datetime.fromisoformat(data['deadline']),
-                owner_id=(Admin.query.filter_by(username=session.get('admin_username')).first().id
-                          if session.get('admin_username') and Admin.query.filter_by(username=session.get('admin_username')).first()
-                          else None)
+                owner_id=current_admin.id if current_admin else None
             )
             db.session.add(assignment)
             db.session.commit()
