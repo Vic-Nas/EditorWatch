@@ -145,17 +145,10 @@ function checkForAssignment(context) {
         return;
     }
     
-    // Check if already accepted
-    const accepted = context.globalState.get('accepted_assignments', {});
-    
-    if (accepted[config.assignment_id]) {
-        console.log('EditorWatch: Assignment already accepted, starting monitoring');
-        startMonitoring(config, context);
-        return;
-    }
-    
-    // Show opt-in prompt
-    showOptInPrompt(config, context);
+    // Start monitoring immediately (do not ask for code at startup).
+    // Code will be requested only at submit time if missing or invalid.
+    console.log('EditorWatch: Starting monitoring without startup prompt');
+    startMonitoring(config, context);
 }
 
 function showOptInPrompt(config, context) {
@@ -356,6 +349,31 @@ async function submitAssignment(context) {
 
             progress.report({ message: 'Uploading...' });
 
+            // Ensure we have a student access code. If missing, ask now.
+            if (!currentAssignment.student_code) {
+                const codeInput = await vscode.window.showInputBox({
+                    prompt: 'Enter your access code (sent via email)',
+                    placeHolder: 'ABC123',
+                    ignoreFocusOut: true,
+                    validateInput: (text) => {
+                        if (!text || text.trim().length === 0) return 'Access code is required';
+                        return null;
+                    }
+                });
+
+                if (!codeInput) {
+                    vscode.window.showWarningMessage('Submission cancelled: access code required');
+                    return;
+                }
+
+                currentAssignment.student_code = codeInput.trim().toUpperCase();
+                // persist the code so user doesn't need to re-enter frequently
+                const accepted = context.globalState.get('accepted_assignments', {});
+                accepted[currentAssignment.assignment_id] = accepted[currentAssignment.assignment_id] || {};
+                accepted[currentAssignment.assignment_id].code = currentAssignment.student_code;
+                context.globalState.update('accepted_assignments', accepted);
+            }
+
             const payload = JSON.stringify({
                 code: currentAssignment.student_code,
                 assignment_id: currentAssignment.assignment_id,
@@ -363,7 +381,50 @@ async function submitAssignment(context) {
                 files: filesMap
             });
 
-            await makeRequest(currentAssignment.server + '/api/submit', payload);
+            // attempt submission; on failure offer to re-enter code then retry
+            try {
+                await makeRequest(currentAssignment.server + '/api/submit', payload);
+            } catch (err) {
+                // Ask user if they'd like to enter a different code (likely invalid)
+                const choice = await vscode.window.showErrorMessage(
+                    `Submission failed: ${err.message}`,
+                    'Enter Code', 'Retry', 'Cancel'
+                );
+
+                if (choice === 'Enter Code') {
+                    const newCode = await vscode.window.showInputBox({
+                        prompt: 'Enter your access code (sent via email)',
+                        placeHolder: 'ABC123',
+                        ignoreFocusOut: true,
+                        validateInput: (text) => {
+                            if (!text || text.trim().length === 0) return 'Access code is required';
+                            return null;
+                        }
+                    });
+                    if (newCode) {
+                        currentAssignment.student_code = newCode.trim().toUpperCase();
+                        const accepted = context.globalState.get('accepted_assignments', {});
+                        accepted[currentAssignment.assignment_id] = accepted[currentAssignment.assignment_id] || {};
+                        accepted[currentAssignment.assignment_id].code = currentAssignment.student_code;
+                        context.globalState.update('accepted_assignments', accepted);
+                        // retry once
+                        await makeRequest(currentAssignment.server + '/api/submit', JSON.stringify({
+                            code: currentAssignment.student_code,
+                            assignment_id: currentAssignment.assignment_id,
+                            events: events,
+                            files: filesMap
+                        }));
+                        vscode.window.showInformationMessage('✅ Assignment submitted successfully after code update!');
+                    } else {
+                        vscode.window.showWarningMessage('Submission cancelled');
+                    }
+                } else if (choice === 'Retry') {
+                    await makeRequest(currentAssignment.server + '/api/submit', payload);
+                    vscode.window.showInformationMessage('✅ Assignment submitted successfully!');
+                } else {
+                    vscode.window.showWarningMessage('Submission cancelled');
+                }
+            }
             
             vscode.window.showInformationMessage(
                 '✅ Assignment submitted successfully!',
