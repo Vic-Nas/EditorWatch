@@ -37,6 +37,8 @@ Monitor your coding process for programming assignments.
 
 6. **Submit when done** by clicking the 👁️ icon
 
+When you submit via the extension, EditorWatch also includes file snapshots for files touched during your session. These snapshots are sent as plaintext in the submission payload, compressed and encrypted on the server, and are used by instructors to verify that the files they download from an LMS/platform match the files that were analyzed by EditorWatch. You can opt out by disabling monitoring before submitting.
+
 ### Troubleshooting
 
 **Extension not activating?**

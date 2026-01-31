@@ -50,6 +50,8 @@ class Submission(db.Model):
     email = db.Column(db.String(200), nullable=False)
     assignment_id = db.Column(db.String(50), db.ForeignKey('assignments.assignment_id'), nullable=False)
     events_encrypted = db.Column(db.Text, nullable=False)
+    # Optional: encrypted JSON mapping of filename -> gzip(base64) snapshot
+    files_encrypted = db.Column(db.Text, nullable=True)
     submitted_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     __table_args__ = (db.UniqueConstraint('assignment_id', 'email', name='_assignment_student_uc'),)

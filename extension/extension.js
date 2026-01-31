@@ -330,14 +330,39 @@ async function submitAssignment(context) {
                 return;
             }
             
+            progress.report({ message: 'Collecting files...' });
+
+            // Build map of filename -> contents for files touched in events
+            const filesMap = {};
+            const uniqueFiles = Array.from(new Set(events.map(e => e.file).filter(Boolean)));
+
+            for (const fpath of uniqueFiles) {
+                const base = path.basename(fpath);
+                let content = '';
+                try {
+                    // Try reading from disk first
+                    content = fs.readFileSync(fpath, 'utf8');
+                } catch (err) {
+                    try {
+                        // Fallback to opening via VS Code API
+                        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(fpath));
+                        content = doc.getText();
+                    } catch (err2) {
+                        content = '';
+                    }
+                }
+                filesMap[base] = content;
+            }
+
             progress.report({ message: 'Uploading...' });
-            
+
             const payload = JSON.stringify({
                 code: currentAssignment.student_code,
                 assignment_id: currentAssignment.assignment_id,
-                events: events
+                events: events,
+                files: filesMap
             });
-            
+
             await makeRequest(currentAssignment.server + '/api/submit', payload);
             
             vscode.window.showInformationMessage(

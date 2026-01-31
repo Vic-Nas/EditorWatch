@@ -7,7 +7,15 @@ from flask import Flask, request, jsonify, render_template, redirect, url_for, s
 from models import db, Submission, Assignment, StudentCode, AnalysisResult, init_db
 from cryptography.fernet import Fernet
 import json
-from utils import encrypt_data, decrypt_data, get_events_from_submission, files_from_events
+from utils import (
+    encrypt_data,
+    decrypt_data,
+    get_events_from_submission,
+    files_from_events,
+    compress_text_to_b64,
+    decompress_b64_to_text,
+    sha256_of_b64,
+)
 from datetime import datetime
 import redis
 from rq import Queue
@@ -200,6 +208,19 @@ def submit_assignment():
                 events_encrypted=events_encrypted
             )
             db.session.add(submission)
+
+        # Optional: accept file snapshots mapping { "filename.py": "<file contents>", ... }
+        # Compress and store snapshots (gzip + base64) encrypted.
+        try:
+            files_payload = data.get('files')
+            if files_payload and isinstance(files_payload, dict):
+                compressed = {}
+                for fname, content in files_payload.items():
+                    base = fname.split('/')[-1]
+                    compressed[base] = compress_text_to_b64(content or '')
+                submission.files_encrypted = encrypt_data(compressed)
+        except Exception as e:
+            logger.warning(f"Failed to process file snapshots: {e}")
         
         db.session.commit()
         
@@ -588,26 +609,45 @@ def verify_submission():
     except Exception as e:
         logger.error(f"Error decrypting events for verification: {e}")
         return jsonify({'error': 'Failed to decrypt submission events'}), 500
-
     tracked_files = set(e.get('file', '').split('/')[-1] for e in events if e.get('file'))
-    
-    # Compare uploaded files
-    import hashlib
+
+    # Load stored compressed snapshots if available
+    stored_compressed = {}
+    if getattr(submission, 'files_encrypted', None):
+        try:
+            stored_compressed = decrypt_data(submission.files_encrypted) or {}
+        except Exception as e:
+            logger.warning(f"Failed to decrypt stored file snapshots: {e}")
+
+    if not stored_compressed:
+        # No stored snapshots — return a helpful error so teacher knows to request students include snapshots
+        return jsonify({
+            'error': 'No stored file snapshots for this submission. Require students to submit file snapshots with their timeline.'
+        }), 400
+
+    # Compare uploaded files against stored compressed snapshots
     results = {}
     for filename, content in (uploaded_files or {}).items():
+        base = filename.split('/')[-1]
         try:
-            uploaded_hash = hashlib.sha256(content.encode()).hexdigest()
+            uploaded_b64 = compress_text_to_b64(content or '')
+            uploaded_hash = sha256_of_b64(uploaded_b64)
         except Exception:
-            # If content is bytes already or cannot be encoded, try hashing bytes
-            try:
-                uploaded_hash = hashlib.sha256(content).hexdigest()
-            except Exception:
-                uploaded_hash = None
-        results[filename] = {
-            'hash': uploaded_hash,
-            'was_tracked': filename in tracked_files
+            uploaded_b64 = None
+            uploaded_hash = None
+
+        recorded_b64 = stored_compressed.get(base)
+        recorded_hash = sha256_of_b64(recorded_b64) if recorded_b64 else None
+
+        matches = (uploaded_hash is not None and recorded_hash is not None and uploaded_hash == recorded_hash)
+
+        results[base] = {
+            'uploaded_hash': uploaded_hash,
+            'recorded_hash': recorded_hash,
+            'matches': matches,
+            'was_tracked': base in tracked_files
         }
-    
+
     return jsonify({
         'student': student_email,
         'tracked_files': list(tracked_files),

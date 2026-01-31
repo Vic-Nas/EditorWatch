@@ -126,23 +126,30 @@ export SMTP_FROM='your-email@gmail.com'
 - `templates/` - Web UI (dashboard, submission detail)
 
 ## API: Verify submission hashes
+The server exposes two related endpoints used for submission and verification when teachers need to confirm that files submitted to their LMS/platform match what was analyzed by EditorWatch.
 
-The server exposes an endpoint to help verify that an uploaded student submission matches the tracked files recorded by EditorWatch.
+- Endpoint (submit): `POST /api/submit`
+  - Accepts the normal `code`, `assignment_id`, and `events` payloads from the extension.
+  - Optional: include a `files` object mapping `{ "relative/or/base/filename.py": "<file contents>", ... }`.
+  - When present, the server compresses (gzip) and base64-encodes each file content, then encrypts and stores the snapshot alongside the submission. These compressed snapshots are used later for verification.
 
-- Endpoint: `POST /api/verify-submission`
-- Auth: requires admin session (teacher must be logged into the dashboard)
-- Request JSON:
-   - `assignment_id` (string) — assignment identifier
-   - `email` (string) — student email
-   - `files` (object) — mapping `{ "filename.py": "<file contents>", ... }`
-- Response JSON:
-   - `student` — email provided
-   - `tracked_files` — list of filenames that were tracked in the student's timeline
-   - `verification` — mapping per uploaded file: `{ hash, was_tracked }`
+- Endpoint (verify): `POST /api/verify-submission`
+  - Auth: requires admin session (teacher must be logged into the dashboard).
+  - Request JSON:
+     - `assignment_id` (string) — assignment identifier
+     - `email` (string) — student email
+     - `files` (object) — mapping `{ "filename.py": "<file contents>", ... }` containing the files the teacher received from the student (e.g., from the LMS)
+  - Response JSON (when snapshots exist):
+     - `student` — email provided
+     - `tracked_files` — list of filenames that were seen in the student's recorded events
+     - `verification` — mapping per uploaded file: `{ uploaded_hash, recorded_hash, matches, was_tracked }`
 
-How it works: the endpoint decrypts the student's stored event timeline, extracts tracked filenames, and returns SHA256 hashes for each uploaded file together with a boolean indicating whether that filename was seen in the recorded events. This is intended as a simple verification aid for teachers — it does not guarantee provenance but helps spot mismatches between submitted files and the monitored timeline.
+How it works: if a submission included file snapshots at submit time, EditorWatch stores compressed+encrypted snapshots keyed by filename. When you POST to `/api/verify-submission` with the files you received from a student, the server compresses and hashes each uploaded file (SHA256 over the compressed bytes) and compares that hash to the stored snapshot's hash. The response contains both hashes, a `matches` boolean, and `was_tracked` to indicate whether that filename appeared in the recorded event timeline.
 
-Keep in mind: the verify API compares filenames (base names) seen in EditorWatch events to the filenames you upload. Ensure uploaded filenames match those used during tracking.
+Important notes:
+- The server will return an error if no stored file snapshots are available for a submission — for reliable verification, students must submit snapshots via the extension (or another client) at the time they submit their timeline.
+- Filenames are normalized to their basename by default in this version. If you need path-aware verification (relative paths), consider enabling/adding full-path support in both the extension and server (recommended for courses where multiple students may use identical basenames in nested folders).
+- This verification is intended as an evidence aid — it helps detect mismatches between what was analyzed and what was submitted to an LMS, but it does not legally prove authorship.
 
 ## Tech Stack
 
