@@ -451,19 +451,23 @@ def delete_assignment(assignment_id):
         return jsonify({'error': 'Unauthorized'}), 403
 
     try:
-        # Delete analysis results for submissions of this assignment first to avoid
-        # foreign key violations (Postgres enforces FK constraints on bulk deletes).
+        # Use SQL-level DELETE statements with a submissions subquery to avoid
+        # Query.delete() with join() (which SQLAlchemy disallows).
+        from sqlalchemy import delete
         from sqlalchemy.exc import SQLAlchemyError
 
-        # Delete AnalysisResult rows that reference submissions for this assignment
-        AnalysisResult.query.join(Submission).filter(Submission.assignment_id == assignment_id).delete(synchronize_session=False)
+        subq = db.session.query(Submission.id).filter(Submission.assignment_id == assignment_id).subquery()
 
-        # Now delete submissions and student codes
-        Submission.query.filter_by(assignment_id=assignment_id).delete(synchronize_session=False)
-        StudentCode.query.filter_by(assignment_id=assignment_id).delete(synchronize_session=False)
+        # Delete analysis results that reference those submissions
+        db.session.execute(delete(AnalysisResult).where(AnalysisResult.submission_id.in_(subq)))
 
-        # Finally delete the assignment row
-        db.session.delete(assignment)
+        # Delete submissions and student codes for the assignment
+        db.session.execute(delete(Submission).where(Submission.assignment_id == assignment_id))
+        db.session.execute(delete(StudentCode).where(StudentCode.assignment_id == assignment_id))
+
+        # Delete assignment row
+        db.session.execute(delete(Assignment).where(Assignment.assignment_id == assignment_id))
+
         db.session.commit()
 
     except SQLAlchemyError as e:
