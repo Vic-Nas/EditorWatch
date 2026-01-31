@@ -75,28 +75,40 @@ def send_code_email(email, code, assignment_name):
     """Send access code via email"""
     if not SMTP_ENABLED:
         return False
-    
-    try:
-        subject = f'EditorWatch Code - {assignment_name}'
-        body = f"""Your EditorWatch access code for "{assignment_name}":
+
+    # Prepare message
+    subject = f'EditorWatch Code - {assignment_name}'
+    body = f"""Your EditorWatch access code for \"{assignment_name}\":
 
 {code}
 
 Enter this code in VS Code when prompted to enable monitoring.
 """
-        
-        msg = MIMEText(body)
-        msg['Subject'] = subject
-        msg['From'] = os.environ.get('SMTP_FROM')
-        msg['To'] = email
-        
-        with smtplib.SMTP(os.environ.get('SMTP_HOST'), int(os.environ.get('SMTP_PORT', 587))) as server:
+
+    msg = MIMEText(body)
+    msg['Subject'] = subject
+    msg['From'] = os.environ.get('SMTP_FROM')
+    msg['To'] = email
+
+    # Use a short socket timeout to avoid long worker blocking
+    host = os.environ.get('SMTP_HOST')
+    port = int(os.environ.get('SMTP_PORT', 587))
+    user = os.environ.get('SMTP_USER')
+    password = os.environ.get('SMTP_PASSWORD')
+
+    try:
+        server = smtplib.SMTP(host, port, timeout=10)
+        try:
             server.starttls()
-            server.login(os.environ.get('SMTP_USER'), os.environ.get('SMTP_PASSWORD'))
+            server.login(user, password)
             server.send_message(msg)
-        
-        logger.info(f"✅ Sent code to {email}")
-        return True
+            logger.info(f"✅ Sent code to {email}")
+            return True
+        finally:
+            try:
+                server.quit()
+            except Exception:
+                pass
     except Exception as e:
         logger.error(f"❌ Failed to send email to {email}: {e}")
         return False
@@ -335,10 +347,14 @@ def assignments():
                 )
                 db.session.add(student_code)
                 
-                # Try to send email
-                email_sent = send_code_email(email, code, assignment.name)
-                if email_sent:
-                    codes_sent += 1
+                # Queue sending email so assignment creation doesn't block
+                try:
+                    job = task_queue.enqueue(send_code_email, email, code, assignment.name)
+                    # consider it sent if job was created
+                    if job:
+                        codes_sent += 1
+                except Exception as e:
+                    logger.warning(f"Failed to enqueue email to {email}: {e}")
                 
                 students_with_codes.append({
                     'email': email,
