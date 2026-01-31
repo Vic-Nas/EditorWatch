@@ -5,6 +5,7 @@ from io import StringIO
 from email.mime.text import MIMEText
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session, Response, send_from_directory
 from models import db, Submission, Assignment, StudentCode, AnalysisResult, init_db
+from sqlalchemy import func
 from cryptography.fernet import Fernet
 import json
 from utils import (
@@ -324,7 +325,9 @@ def assignments():
     
     for a in assignments:
         total_students = StudentCode.query.filter_by(assignment_id=a.assignment_id).count()
-        submitted_count = Submission.query.filter_by(assignment_id=a.assignment_id).count()
+        # Use COUNT() projection to avoid selecting all submission columns
+        # (some DB instances may lack optional columns like `files_encrypted`).
+        submitted_count = Submission.query.with_entities(func.count(Submission.id)).filter_by(assignment_id=a.assignment_id).scalar() or 0
         
         result.append({
             'assignment_id': a.assignment_id,
