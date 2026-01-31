@@ -515,5 +515,62 @@ def export_submission_data(submission_id):
     )
 
 
+@app.route('/api/verify-submission', methods=['POST'])
+def verify_submission():
+    """Get hashes of student's tracked submission for verification"""
+    if 'logged_in' not in session:
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    data = request.json or {}
+    assignment_id = data.get('assignment_id')
+    student_email = data.get('email')
+    uploaded_files = data.get('files', {})  # {filename: content}
+    
+    # Validate inputs
+    if not assignment_id or not student_email:
+        return jsonify({'error': 'Missing assignment_id or email'}), 400
+    
+    # Get student's submission
+    submission = Submission.query.filter_by(
+        assignment_id=assignment_id,
+        email=student_email
+    ).first()
+    
+    if not submission:
+        return jsonify({'error': 'No submission found'}), 404
+    
+    # Decrypt events to get file list
+    try:
+        events = decrypt_data(submission.events_encrypted)
+    except Exception as e:
+        logger.error(f"Error decrypting events for verification: {e}")
+        return jsonify({'error': 'Failed to decrypt submission events'}), 500
+
+    tracked_files = set(e.get('file', '').split('/')[-1] for e in events if e.get('file'))
+    
+    # Compare uploaded files
+    import hashlib
+    results = {}
+    for filename, content in (uploaded_files or {}).items():
+        try:
+            uploaded_hash = hashlib.sha256(content.encode()).hexdigest()
+        except Exception:
+            # If content is bytes already or cannot be encoded, try hashing bytes
+            try:
+                uploaded_hash = hashlib.sha256(content).hexdigest()
+            except Exception:
+                uploaded_hash = None
+        results[filename] = {
+            'hash': uploaded_hash,
+            'was_tracked': filename in tracked_files
+        }
+    
+    return jsonify({
+        'student': student_email,
+        'tracked_files': list(tracked_files),
+        'verification': results
+    })
+
+
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))

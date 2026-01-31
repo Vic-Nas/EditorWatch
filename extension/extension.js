@@ -345,13 +345,7 @@ async function submitAssignment(context) {
                 'OK'
             );
             
-            // Clean up
-            if (db) {
-                db.close();
-                db = null;
-            }
-            statusBarItem.hide();
-            currentAssignment = null;
+            // Keep monitoring active so users can resubmit until deadline
             
         } catch (error) {
             vscode.window.showErrorMessage(
