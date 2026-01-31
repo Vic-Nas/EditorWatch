@@ -150,22 +150,23 @@ def login():
     if request.method == 'POST':
         # Signup flow (allowed if no admins exist or ALLOW_SIGNUP=yes)
         if request.form.get('action') == 'signup':
-            allow_signup = os.environ.get('ALLOW_SIGNUP', 'no').lower() == 'yes'
-            with app.app_context():
-                existing = Admin.query.count()
-                if existing == 0 or allow_signup:
-                    username = request.form.get('username')
-                    password = request.form.get('password')
-                    if not username or not password:
-                        return render_template('login.html', error='Missing username or password')
-                    if Admin.query.filter_by(username=username).first():
-                        return render_template('login.html', error='Username already exists')
-                    admin = Admin(username=username, password_hash=generate_password_hash(password))
-                    db.session.add(admin)
-                    db.session.commit()
-                    session['logged_in'] = True
-                    return redirect(url_for('index'))
-                return render_template('login.html', error='Signup not allowed')
+            # Allow public signup for any user. New user becomes an Admin account
+            # scoped to their own assignments. This intentionally permits open
+            # registration per the project owner's request.
+            username = request.form.get('username')
+            password = request.form.get('password')
+            if not username or not password:
+                return render_template('login.html', error='Missing username or password')
+            if Admin.query.filter_by(username=username).first():
+                return render_template('login.html', error='Username already exists')
+            admin = Admin(username=username, password_hash=generate_password_hash(password))
+            db.session.add(admin)
+            db.session.commit()
+            # mark session as logged-in admin so listing and ownership behave correctly
+            session['logged_in'] = True
+            session['admin_username'] = username
+            session['is_env_admin'] = False
+            return redirect(url_for('index'))
 
         # Login flow: check DB admins first, then fallback to env creds
         username = request.form.get('username')
