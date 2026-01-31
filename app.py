@@ -487,40 +487,16 @@ def download_codes_csv(assignment_id):
     } for s in students]
     
     csv_content = generate_codes_csv(students_data)
-    
-    return Response(
-        csv_content,
-        mimetype='text/csv',
-        headers={'Content-Disposition': f'attachment; filename="{assignment_id}_codes.csv"'}
-    )
+
+    # Force download by using a binary content type and explicit attachment header
+    headers = {
+        'Content-Disposition': f'attachment; filename={assignment_id}_codes.csv',
+        'Content-Transfer-Encoding': 'binary'
+    }
+    return Response(csv_content, mimetype='application/octet-stream', headers=headers)
 
 
-@app.route('/api/assignments/<assignment_id>/codes.json')
-def download_codes_json(assignment_id):
-    """Download codes as JSON"""
-    if 'logged_in' not in session:
-        return jsonify({'error': 'Unauthorized'}), 401
-
-    assignment = Assignment.query.filter_by(assignment_id=assignment_id).first_or_404()
-    current_admin = None
-    if session.get('admin_username'):
-        current_admin = Admin.query.filter_by(username=session.get('admin_username')).first()
-    if not current_admin or assignment.owner_id != current_admin.id:
-        return jsonify({'error': 'Unauthorized'}), 403
-
-    students = StudentCode.query.filter_by(assignment_id=assignment_id).all()
-    students_data = [{
-        'email': s.email,
-        'first_name': s.first_name or '',
-        'last_name': s.last_name or '',
-        'code': s.code
-    } for s in students]
-
-    return Response(
-        json.dumps(students_data, indent=2),
-        mimetype='application/json',
-        headers={'Content-Disposition': f'attachment; filename="{assignment_id}_codes.json"'}
-    )
+# JSON endpoint removed to avoid browsers displaying file instead of downloading CSV
 
 
 @app.route('/assignments/<assignment_id>/mailtos')
