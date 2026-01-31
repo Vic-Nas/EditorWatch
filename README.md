@@ -125,6 +125,25 @@ export SMTP_FROM='your-email@gmail.com'
 - `analysis/visualizer.py` - Plotly charts
 - `templates/` - Web UI (dashboard, submission detail)
 
+## API: Verify submission hashes
+
+The server exposes an endpoint to help verify that an uploaded student submission matches the tracked files recorded by EditorWatch.
+
+- Endpoint: `POST /api/verify-submission`
+- Auth: requires admin session (teacher must be logged into the dashboard)
+- Request JSON:
+   - `assignment_id` (string) — assignment identifier
+   - `email` (string) — student email
+   - `files` (object) — mapping `{ "filename.py": "<file contents>", ... }`
+- Response JSON:
+   - `student` — email provided
+   - `tracked_files` — list of filenames that were tracked in the student's timeline
+   - `verification` — mapping per uploaded file: `{ hash, was_tracked }`
+
+How it works: the endpoint decrypts the student's stored event timeline, extracts tracked filenames, and returns SHA256 hashes for each uploaded file together with a boolean indicating whether that filename was seen in the recorded events. This is intended as a simple verification aid for teachers — it does not guarantee provenance but helps spot mismatches between submitted files and the monitored timeline.
+
+Keep in mind: the verify API compares filenames (base names) seen in EditorWatch events to the filenames you upload. Ensure uploaded filenames match those used during tracking.
+
 ## Tech Stack
 
 - **Backend**: Flask, PostgreSQL, Redis

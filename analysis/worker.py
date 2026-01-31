@@ -1,26 +1,26 @@
 import os
 import sys
 import json
-from cryptography.fernet import Fernet
+import logging
 
-# Add parent directory to path to allow imports
+# Make package imports work when run as a worker
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models import db, Submission, AnalysisResult
 from analysis.metrics import calculate_all_metrics
 from analysis.visualizer import create_velocity_chart, create_activity_overview, create_file_risk_table
+from utils import get_events_from_submission
 
-# Initialize encryption (same as app.py but without importing app)
-ENCRYPTION_KEY = os.environ.get('ENCRYPTION_KEY', Fernet.generate_key())
-if isinstance(ENCRYPTION_KEY, str):
-    ENCRYPTION_KEY = ENCRYPTION_KEY.encode()
-cipher = Fernet(ENCRYPTION_KEY)
+# Worker logger (avoid dumping sensitive payloads)
+logger = logging.getLogger('editorwatch.worker')
 
 
-def decrypt_data(encrypted_data):
-    """Decrypt data from storage"""
-    decrypted = cipher.decrypt(encrypted_data.encode())
-    return json.loads(decrypted.decode())
+def _mask_email(email):
+    try:
+        local, domain = email.split('@', 1)
+        return f"{local[:1]}***@{domain}"
+    except Exception:
+        return '***'
 
 
 def analyze_submission(submission_id):
@@ -33,21 +33,22 @@ def analyze_submission(submission_id):
     with app.app_context():
         submission = Submission.query.get(submission_id)
         if not submission:
-            print(f"Submission {submission_id} not found")
+            logger.warning('Submission not found: %s', submission_id)
             return
-        
-        print(f"🔍 Analyzing submission {submission_id} for {submission.email}")
-        
-        # Decrypt events
-        events = decrypt_data(submission.events_encrypted)
-        print(f"   {len(events)} events to analyze")
-        
+
+        masked = _mask_email(submission.email or '')
+        logger.info('Analyzing submission %s (student=%s)', submission_id, masked)
+
+        # Get events (utils handles decryption safely)
+        events = get_events_from_submission(submission)
+        logger.info('Events to analyze: %d', len(events))
+
         # Calculate comprehensive metrics
         result = calculate_all_metrics(events)
-        print(f"   ✓ Metrics calculated")
-        
-        # Generate visualizations
-        print(f"   Creating visualizations...")
+        logger.info('Metrics calculated for submission %s', submission_id)
+
+        # Generate visualizations (do not log their content)
+        logger.info('Creating visualizations for submission %s', submission_id)
         velocity_html = create_velocity_chart(events)
         overview_html = create_activity_overview(events, result['file_risks'])
         file_risk_table = create_file_risk_table(result['file_risks'])
@@ -79,7 +80,7 @@ def analyze_submission(submission_id):
         </div>
         """
         
-        print(f"   ✓ Visualizations created")
+        logger.info('Visualizations created for submission %s', submission_id)
         
         # Save or update results in database
         analysis = AnalysisResult.query.filter_by(submission_id=submission_id).first()
@@ -114,12 +115,13 @@ def analyze_submission(submission_id):
             db.session.add(analysis)
         
         db.session.commit()
-        
-        print(f"✅ Analysis complete for submission {submission_id}")
-        print(f"   Overall Score: {result.get('overall_score', 0):.1f}/10")
-        print(f"   Metrics: incremental={result['incremental_score']:.1f}, " +
-              f"variance={result['typing_variance']:.1f}, " +
-              f"errors={result['error_correction_ratio']:.1f}")
+
+        logger.info('Analysis complete for submission %s: overall_score=%.1f', submission_id, result.get('overall_score', 0))
+        logger.info('Metrics summary for %s: incremental=%.1f variance=%.1f errors=%.1f',
+                submission_id,
+                result.get('incremental_score', 0),
+                result.get('typing_variance', 0),
+                result.get('error_correction_ratio', 0))
 
 
 if __name__ == '__main__':

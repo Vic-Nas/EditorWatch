@@ -7,6 +7,7 @@ from flask import Flask, request, jsonify, render_template, redirect, url_for, s
 from models import db, Submission, Assignment, StudentCode, AnalysisResult, init_db
 from cryptography.fernet import Fernet
 import json
+from utils import encrypt_data, decrypt_data, get_events_from_submission, files_from_events
 from datetime import datetime
 import redis
 from rq import Queue
@@ -16,10 +17,10 @@ import logging
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 
-# Configure logging
+# Configure logging: include logger name and keep messages concise
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger(__name__)
@@ -57,16 +58,7 @@ ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'admin')
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'changeme')
 
 
-def encrypt_data(data):
-    """Encrypt data for storage"""
-    json_data = json.dumps(data)
-    return cipher.encrypt(json_data.encode()).decode()
-
-
-def decrypt_data(encrypted_data):
-    """Decrypt data from storage"""
-    decrypted = cipher.decrypt(encrypted_data.encode())
-    return json.loads(decrypted.decode())
+# Use shared utils.encrypt_data / utils.decrypt_data
 
 
 def send_code_email(email, code, assignment_name):
@@ -441,6 +433,57 @@ def get_submissions(assignment_id):
         })
     
     return jsonify(results)
+
+
+@app.route('/assignments/<assignment_id>/graph')
+def assignment_graph(assignment_id):
+    """Render a simple assignment similarity graph (Jaccard over files)."""
+    if 'logged_in' not in session:
+        return redirect(url_for('login'))
+
+    assignment = Assignment.query.filter_by(assignment_id=assignment_id).first_or_404()
+    submissions = Submission.query.filter_by(assignment_id=assignment_id).all()
+
+    students = []
+    for sub in submissions:
+        ev = get_events_from_submission(sub)
+        files = files_from_events(ev)
+
+        student_code = StudentCode.query.filter_by(assignment_id=assignment_id, email=sub.email).first()
+        student_name = sub.email
+        if student_code and student_code.first_name:
+            student_name = f"{student_code.first_name} {student_code.last_name}".strip()
+
+        students.append({
+            'id': sub.id,
+            'label': student_name,
+            'files': files
+        })
+
+    # Build nodes and pairwise Jaccard edges
+    nodes = [{'id': s['id'], 'label': s['label']} for s in students]
+    edges = []
+    for i in range(len(students)):
+        for j in range(i + 1, len(students)):
+            a = set(students[i]['files'])
+            b = set(students[j]['files'])
+            if not a and not b:
+                continue
+            inter = a.intersection(b)
+            union = a.union(b)
+            weight = (len(inter) / len(union)) if union else 0.0
+            if weight > 0:
+                edges.append({'from': students[i]['id'], 'to': students[j]['id'], 'weight': round(weight, 4)})
+
+    graph_data = {
+        'nodes': nodes,
+        'edges': edges,
+        'students': students
+    }
+
+    return render_template('assignment_graph.html', assignment=assignment, graph_data=graph_data)
+
+
 
 
 @app.route('/submission/<int:submission_id>')

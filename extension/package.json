@@ -36,7 +36,6 @@
     ]
   },
   "dependencies": {
-    "sql.js": "^1.10.3"
   },
   "devDependencies": {
     "@types/vscode": "^1.85.0"

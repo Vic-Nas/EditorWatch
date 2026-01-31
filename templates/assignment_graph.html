@@ -1,0 +1,71 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Assignment Graph</title>
+  <script type="text/javascript" src="https://unpkg.com/vis-network@9.1.2/dist/vis-network.min.js"></script>
+  <link href="https://unpkg.com/vis-network@9.1.2/dist/vis-network.min.css" rel="stylesheet" type="text/css" />
+  <style>
+    body { font-family: Arial, sans-serif; margin: 12px; }
+    #network { width: 100%; height: 600px; border: 1px solid #ddd; }
+    .legend { margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <h2>Assignment Graph: {{ assignment.name }} ({{ assignment.assignment_id }})</h2>
+  <p>Nodes = students. Edges = similarity above threshold (Jaccard). Click a node to see files edited.</p>
+
+  <div id="network"></div>
+  <div class="legend">
+    <label>Similarity threshold: <input id="threshold" type="range" min="0" max="1" step="0.01" value="0.5"/></label>
+    <span id="thresholdValue">0.50</span>
+  </div>
+
+  <div id="info" style="margin-top:12px;"></div>
+
+  <script>
+    const data = {{ graph_data|tojson }};
+
+    const nodes = new vis.DataSet(data.nodes.map(n => ({ id: n.id, label: n.label })));
+    const edges = new vis.DataSet(data.edges.map(e => ({ from: e.from, to: e.to, value: e.weight })));
+
+    const container = document.getElementById('network');
+    const options = {
+      nodes: { shape: 'dot', size: 16 },
+      edges: { smooth: true, color: { inherit: 'from' }, width: 2 },
+      physics: { stabilization: true },
+      interaction: { hover: true }
+    };
+
+    const network = new vis.Network(container, { nodes, edges }, options);
+
+    function renderInfo(studentId) {
+      const s = data.students.find(x => x.id === studentId);
+      if (!s) return;
+      const el = document.getElementById('info');
+      el.innerHTML = `<h3>${s.label}</h3><p><strong>Files edited (${s.files.length}):</strong></p><ul>${s.files.map(f=>`<li>${f}</li>`).join('')}</ul>`;
+    }
+
+    network.on('click', function(params) {
+      if (params.nodes && params.nodes.length) {
+        renderInfo(params.nodes[0]);
+      }
+    });
+
+    const thresholdEl = document.getElementById('threshold');
+    const thresholdValue = document.getElementById('thresholdValue');
+    thresholdEl.addEventListener('input', () => {
+      const t = parseFloat(thresholdEl.value);
+      thresholdValue.textContent = t.toFixed(2);
+      // update edges
+      edges.clear();
+      data.edges.forEach(e => {
+        if (e.weight >= t) edges.add({ from: e.from, to: e.to, value: e.weight });
+      });
+    });
+
+    // initialize with default threshold
+    thresholdEl.dispatchEvent(new Event('input'));
+  </script>
+</body>
+</html>
