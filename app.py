@@ -4,7 +4,8 @@ import csv
 from io import StringIO
 from email.mime.text import MIMEText
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session, Response, send_from_directory
-from models import db, Submission, Assignment, StudentCode, AnalysisResult, init_db
+from models import db, Submission, Assignment, StudentCode, AnalysisResult, init_db, Admin
+from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import func
 from cryptography.fernet import Fernet
 import json
@@ -135,10 +136,39 @@ def index():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        if (request.form.get('username') == ADMIN_USERNAME and 
-            request.form.get('password') == ADMIN_PASSWORD):
-            session['logged_in'] = True
-            return redirect(url_for('index'))
+        # Signup flow (allowed if no admins exist or ALLOW_SIGNUP=yes)
+        if request.form.get('action') == 'signup':
+            allow_signup = os.environ.get('ALLOW_SIGNUP', 'no').lower() == 'yes'
+            with app.app_context():
+                existing = Admin.query.count()
+                if existing == 0 or allow_signup:
+                    username = request.form.get('username')
+                    password = request.form.get('password')
+                    if not username or not password:
+                        return render_template('login.html', error='Missing username or password')
+                    if Admin.query.filter_by(username=username).first():
+                        return render_template('login.html', error='Username already exists')
+                    admin = Admin(username=username, password_hash=generate_password_hash(password))
+                    db.session.add(admin)
+                    db.session.commit()
+                    session['logged_in'] = True
+                    return redirect(url_for('index'))
+                return render_template('login.html', error='Signup not allowed')
+
+        # Login flow: check DB admins first, then fallback to env creds
+        username = request.form.get('username')
+        password = request.form.get('password')
+        if username and password:
+            admin = Admin.query.filter_by(username=username).first()
+            if admin and check_password_hash(admin.password_hash, password):
+                session['logged_in'] = True
+                return redirect(url_for('index'))
+
+            # fallback to environment credentials
+            if (username == ADMIN_USERNAME and password == ADMIN_PASSWORD):
+                session['logged_in'] = True
+                return redirect(url_for('index'))
+
         return render_template('login.html', error='Invalid credentials')
     return render_template('login.html')
 

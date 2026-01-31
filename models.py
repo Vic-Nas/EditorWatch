@@ -76,3 +76,13 @@ class AnalysisResult(db.Model):
     flags = db.Column(db.Text)  # JSON array of flag objects
     timeline_html = db.Column(db.Text)  # Plotly HTML visualization
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class Admin(db.Model):
+    """Simple admin user for web UI authentication"""
+    __tablename__ = 'admins'
+
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(100), unique=True, nullable=False)
+    password_hash = db.Column(db.String(200), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
