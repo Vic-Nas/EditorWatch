@@ -72,19 +72,21 @@ function activate(context) {
     watcher.onDidChange(() => checkForAssignment(context));
     context.subscriptions.push(watcher);
     
-    // Track document changes
-    vscode.workspace.onDidChangeTextDocument(event => {
+    // Track document changes - PROPERLY DISPOSED
+    const docChangeDisposable = vscode.workspace.onDidChangeTextDocument(event => {
         if (currentAssignment && shouldTrackFile(event.document.fileName)) {
             logEvent(event);
         }
     });
+    context.subscriptions.push(docChangeDisposable);
     
-    // Track saves
-    vscode.workspace.onDidSaveTextDocument(doc => {
+    // Track saves - PROPERLY DISPOSED
+    const saveDisposable = vscode.workspace.onDidSaveTextDocument(doc => {
         if (currentAssignment && shouldTrackFile(doc.fileName)) {
             logSaveEvent(doc.fileName);
         }
     });
+    context.subscriptions.push(saveDisposable);
     
     // Register commands
     context.subscriptions.push(
