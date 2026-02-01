@@ -1,5 +1,7 @@
 # EditorWatch
 
+[***Live server***](https://editorwatch.up.railway.app/)
+
 **Code authenticity monitor for programming assignments** - Track how students write code, not just what they write.
 
 ## Quick Deploy
@@ -16,8 +18,14 @@
    ADMIN_USERNAME=admin
    ADMIN_PASSWORD=<your-password>
    ```
-4. Railway auto-detects the Procfile and deploys both web + worker
-
+4. Railway auto-detects the Procfile and deploys server
+5. For workers, custom start command:
+```bash
+rq worker analysis --url $REDIS_URL
+```
+1GB RAM, 1GB Memory
+   
+![Image description](https://dev-to-uploads.s3.amazonaws.com/uploads/articles/12t02pxi2zupbis816re.png)
 ### Option 2: Your Own Server
 
 ```bash
@@ -43,17 +51,6 @@ gunicorn app:app &
 # Start worker
 python -m rq.worker analysis --url $REDIS_URL
 ```
-
-### Optional: SMTP Email (otherwise generates CSV with codes)
-
-```bash
-export SMTP_HOST='smtp.gmail.com'
-export SMTP_PORT='587'
-export SMTP_USER='your-email@gmail.com'
-export SMTP_PASSWORD='your-app-password'
-export SMTP_FROM='your-email@gmail.com'
-```
-
 ## Usage
 
 ### For Educators
@@ -67,6 +64,7 @@ export SMTP_FROM='your-email@gmail.com'
 3. **Download files**:
    - `editorwatch` config file → share with all students
    - `codes.csv` → contains all student access codes
+   - - Editable template email + toggle mailto(s)
 4. **Students submit** → Auto-analyzed in background
 5. **Review submissions** → See scores, flags, visualizations
 
@@ -169,7 +167,6 @@ See [LICENCE.md](LICENCE.md)
 
 ## Limitations
 
-- Not foolproof - determined students can bypass
 - Requires VS Code
 - Students must explicitly consent
 - Use as ONE tool alongside code reviews, oral exams
