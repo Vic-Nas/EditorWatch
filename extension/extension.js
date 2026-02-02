@@ -3,8 +3,9 @@ const path = require('path');
 const fs = require('fs');
 const https = require('https');
 const http = require('http');
+const { EventTracker } = require('./tracker');
 
-let db, currentAssignment, statusBarItem;
+let tracker, currentAssignment, statusBarItem;
 
 // Patterns to always ignore
 const IGNORE_PATTERNS = [
@@ -21,40 +22,6 @@ const IGNORE_PATTERNS = [
     'build',
     '.cache'
 ];
-
-// Simple in-memory database using JSON
-class SimpleDB {
-    constructor() {
-        this.events = [];
-    }
-
-    prepare(query) {
-        return {
-            run: (...params) => {
-                if (query.includes('INSERT INTO events')) {
-                    this.events.push({
-                        id: this.events.length + 1,
-                        timestamp: params[0],
-                        type: params[1],
-                        file: params[2],
-                        char_count: params[3]
-                    });
-                }
-            },
-            all: () => {
-                return this.events;
-            }
-        };
-    }
-
-    exec(query) {
-        // No-op for CREATE TABLE
-    }
-
-    close() {
-        this.events = [];
-    }
-}
 
 function activate(context) {
     console.log('EditorWatch extension is now active!');
@@ -75,7 +42,7 @@ function activate(context) {
     // Track document changes - PROPERLY DISPOSED
     const docChangeDisposable = vscode.workspace.onDidChangeTextDocument(event => {
         if (currentAssignment && shouldTrackFile(event.document.fileName)) {
-            logEvent(event);
+            tracker.trackChange(event);  // ← USE TRACKER
         }
     });
     context.subscriptions.push(docChangeDisposable);
@@ -83,7 +50,7 @@ function activate(context) {
     // Track saves - PROPERLY DISPOSED
     const saveDisposable = vscode.workspace.onDidSaveTextDocument(doc => {
         if (currentAssignment && shouldTrackFile(doc.fileName)) {
-            logSaveEvent(doc.fileName);
+            tracker.trackSave(doc.fileName);  // ← USE TRACKER
         }
     });
     context.subscriptions.push(saveDisposable);
@@ -153,58 +120,6 @@ function checkForAssignment(context) {
     startMonitoring(config, context);
 }
 
-function showOptInPrompt(config, context) {
-    const message = `EditorWatch detected assignment: "${config.name}"\n\n` +
-                   `Course: ${config.course}\n` +
-                   `Deadline: ${new Date(config.deadline).toLocaleString()}\n\n` +
-                   `This will track your coding process for academic integrity.\n` +
-                   `Enable monitoring?`;
-    
-    vscode.window.showInformationMessage(
-        message,
-        { modal: true },
-        'Enable', 'Learn More', 'Not Now'
-    ).then(async selection => {
-        if (selection === 'Enable') {
-            // Ask for access code
-            const code = await vscode.window.showInputBox({
-                prompt: 'Enter your access code (sent via email)',
-                placeHolder: 'ABC123',
-                ignoreFocusOut: true,
-                validateInput: (text) => {
-                    if (!text || text.trim().length === 0) {
-                        return 'Access code is required';
-                    }
-                    return null;
-                }
-            });
-            
-            if (!code) {
-                vscode.window.showWarningMessage('EditorWatch: Code required to enable monitoring');
-                return;
-            }
-            
-            // Store code with assignment
-            config.student_code = code.trim().toUpperCase();
-            
-            const accepted = context.globalState.get('accepted_assignments', {});
-            accepted[config.assignment_id] = {
-                accepted_at: Date.now(),
-                workspace: vscode.workspace.workspaceFolders[0].uri.fsPath,
-                code: config.student_code
-            };
-            context.globalState.update('accepted_assignments', accepted);
-            startMonitoring(config, context);
-            
-            vscode.window.showInformationMessage(
-                '✅ EditorWatch monitoring enabled! Click the eye icon in the status bar to submit.'
-            );
-        } else if (selection === 'Learn More') {
-            vscode.env.openExternal(vscode.Uri.parse('https://github.com/Vic-Nas/EditorWatch'));
-        }
-    });
-}
-
 function startMonitoring(config, context) {
     // Restore code if it was saved
     if (!config.student_code) {
@@ -218,11 +133,11 @@ function startMonitoring(config, context) {
     currentAssignment = config;
     
     try {
-        // Use simple in-memory database
-        db = new SimpleDB();
-        console.log('EditorWatch: Database initialized');
+        // Initialize the tracker
+        tracker = new EventTracker();
+        console.log('EditorWatch: Tracker initialized');
     } catch (error) {
-        vscode.window.showErrorMessage(`EditorWatch: Database error - ${error.message}`);
+        vscode.window.showErrorMessage(`EditorWatch: Tracker error - ${error.message}`);
         return;
     }
     
@@ -257,40 +172,8 @@ function shouldTrackFile(fileName) {
     });
 }
 
-function logEvent(event) {
-    if (!db) return;
-    
-    const change = event.contentChanges[0];
-    if (!change) return;
-    
-    try {
-        const type = change.text ? 'insert' : 'delete';
-        const charCount = Math.abs(change.text?.length || change.rangeLength || 0);
-        
-        db.prepare(`
-            INSERT INTO events (timestamp, type, file, char_count)
-            VALUES (?, ?, ?, ?)
-        `).run(Date.now(), type, event.document.fileName, charCount);
-    } catch (error) {
-        console.error('EditorWatch: Error logging event:', error);
-    }
-}
-
-function logSaveEvent(fileName) {
-    if (!db) return;
-    
-    try {
-        db.prepare(`
-            INSERT INTO events (timestamp, type, file, char_count)
-            VALUES (?, ?, ?, ?)
-        `).run(Date.now(), 'save', fileName, 0);
-    } catch (error) {
-        console.error('EditorWatch: Error logging save:', error);
-    }
-}
-
 async function submitAssignment(context) {
-    if (!currentAssignment || !db) {
+    if (!currentAssignment || !tracker) {
         vscode.window.showErrorMessage('EditorWatch: No active assignment');
         return;
     }
@@ -318,7 +201,7 @@ async function submitAssignment(context) {
     }, async (progress) => {
         try {
             progress.report({ message: 'Collecting events...' });
-            const events = db.prepare('SELECT * FROM events ORDER BY timestamp').all();
+            const events = tracker.getEvents();  // ← GET FROM TRACKER
             
             if (events.length === 0) {
                 vscode.window.showWarningMessage('No coding activity detected. Write some code first!');
@@ -503,9 +386,9 @@ function disableMonitoring(context) {
             delete accepted[currentAssignment.assignment_id];
             context.globalState.update('accepted_assignments', accepted);
             
-            if (db) {
-                db.close();
-                db = null;
+            if (tracker) {
+                tracker.clear();
+                tracker = null;
             }
             
             currentAssignment = null;
@@ -517,11 +400,11 @@ function disableMonitoring(context) {
 }
 
 function deactivate() {
-    if (db) {
+    if (tracker) {
         try {
-            db.close();
+            tracker.clear();
         } catch (error) {
-            console.error('EditorWatch: Error closing database:', error);
+            console.error('EditorWatch: Error closing tracker:', error);
         }
     }
 }
