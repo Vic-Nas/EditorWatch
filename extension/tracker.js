@@ -14,27 +14,35 @@ class EventTracker {
      * Track a document change event
      */
     trackChange(event) {
-        // DEBUG: See what VSCode is sending us
-        console.log(`[TRACKER DEBUG] contentChanges.length: ${event.contentChanges.length}`);
-        
         const change = event.contentChanges[0];
         if (!change) return;
 
-        const type = change.text ? 'insert' : 'delete';
-        const charCount = Math.abs(change.text?.length || change.rangeLength || 0);
-
-        // DEBUG: Log details
-        console.log(`[TRACKER] ${event.document.fileName}`);
-        console.log(`  Type: ${type}`);
-        console.log(`  Char count: ${charCount}`);
-        console.log(`  change.text.length: ${change.text?.length}`);
-        console.log(`  change.rangeLength: ${change.rangeLength}`);
+        // Determine type and count
+        let type, charCount;
         
-        // If there are multiple changes, we might be missing them!
-        if (event.contentChanges.length > 1) {
-            console.log(`  ⚠️  WARNING: ${event.contentChanges.length} changes, but only tracking first one!`);
-            const total = event.contentChanges.reduce((sum, c) => sum + (c.text?.length || c.rangeLength || 0), 0);
-            console.log(`  Total if we summed all changes: ${total}`);
+        if (change.text && change.rangeLength > 0) {
+            // REPLACEMENT (e.g., Copilot suggestion)
+            // Use the NET change: new text length - old text length
+            const netChange = change.text.length - change.rangeLength;
+            if (netChange > 0) {
+                type = 'insert';
+                charCount = netChange;
+            } else if (netChange < 0) {
+                type = 'delete';
+                charCount = Math.abs(netChange);
+            } else {
+                // Same length replacement, count as insert
+                type = 'insert';
+                charCount = change.text.length;
+            }
+        } else if (change.text) {
+            // PURE INSERT
+            type = 'insert';
+            charCount = change.text.length;
+        } else {
+            // PURE DELETE
+            type = 'delete';
+            charCount = change.rangeLength || 0;
         }
 
         this.events.push({
