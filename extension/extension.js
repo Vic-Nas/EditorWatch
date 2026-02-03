@@ -39,18 +39,18 @@ function activate(context) {
     watcher.onDidChange(() => checkForAssignment(context));
     context.subscriptions.push(watcher);
     
-    // Track document changes - PROPERLY DISPOSED
+    // Track document changes
     const docChangeDisposable = vscode.workspace.onDidChangeTextDocument(event => {
-        if (currentAssignment && shouldTrackFile(event.document.fileName)) {
-            tracker.trackChange(event);  // ← USE TRACKER
+        if (currentAssignment && tracker && shouldTrackFile(event.document.fileName)) {
+            tracker.trackChange(event);
         }
     });
     context.subscriptions.push(docChangeDisposable);
     
-    // Track saves - PROPERLY DISPOSED
+    // Track saves
     const saveDisposable = vscode.workspace.onDidSaveTextDocument(doc => {
-        if (currentAssignment && shouldTrackFile(doc.fileName)) {
-            tracker.trackSave(doc.fileName);  // ← USE TRACKER
+        if (currentAssignment && tracker && shouldTrackFile(doc.fileName)) {
+            tracker.trackSave(doc.fileName);
         }
     });
     context.subscriptions.push(saveDisposable);
@@ -89,20 +89,15 @@ function checkForAssignment(context) {
     const workspaceRoot = workspaceFolders[0].uri.fsPath;
     const editorwatchPath = path.join(workspaceRoot, 'editorwatch');
     
-    console.log('EditorWatch: Checking for config at:', editorwatchPath);
-    
     if (!fs.existsSync(editorwatchPath)) {
         console.log('EditorWatch: No editorwatch file found');
         return;
     }
     
-    console.log('EditorWatch: Config file found!');
-    
     let config;
     try {
         const configContent = fs.readFileSync(editorwatchPath, 'utf8');
         config = JSON.parse(configContent);
-        console.log('EditorWatch: Config loaded:', config);
     } catch (error) {
         vscode.window.showErrorMessage(`EditorWatch: Invalid config file - ${error.message}`);
         return;
@@ -114,13 +109,15 @@ function checkForAssignment(context) {
         return;
     }
     
-    // Start monitoring immediately (do not ask for code at startup).
-    // Code will be requested only at submit time if missing or invalid.
-    console.log('EditorWatch: Starting monitoring without startup prompt');
     startMonitoring(config, context);
 }
 
 function startMonitoring(config, context) {
+    // Already monitoring this assignment — don't reset the tracker
+    if (currentAssignment && currentAssignment.assignment_id === config.assignment_id && tracker) {
+        return;
+    }
+
     // Restore code if it was saved
     if (!config.student_code) {
         const accepted = context.globalState.get('accepted_assignments', {});
@@ -133,9 +130,7 @@ function startMonitoring(config, context) {
     currentAssignment = config;
     
     try {
-        // Initialize the tracker
         tracker = new EventTracker();
-        console.log('EditorWatch: Tracker initialized');
     } catch (error) {
         vscode.window.showErrorMessage(`EditorWatch: Tracker error - ${error.message}`);
         return;
@@ -155,7 +150,6 @@ function shouldTrackFile(fileName) {
     
     const relativePath = vscode.workspace.asRelativePath(fileName);
     
-    // Check if in ignored directory
     for (const ignore of IGNORE_PATTERNS) {
         if (relativePath.includes(ignore)) {
             return false;
@@ -166,11 +160,82 @@ function shouldTrackFile(fileName) {
     const baseName = path.basename(fileName);
     
     return patterns.some(pattern => {
-        // Convert glob pattern to regex
         const regex = new RegExp('^' + pattern.replace(/\./g, '\\.').replace(/\*/g, '.*') + '$');
         return regex.test(baseName);
     });
 }
+
+// ---------------------------------------------------------------------------
+// Submission helpers
+// ---------------------------------------------------------------------------
+
+async function collectPayload() {
+    const compactData = tracker.getEvents();
+
+    if (compactData.events.length === 0) {
+        vscode.window.showWarningMessage('No coding activity detected. Write some code first!');
+        return null;
+    }
+
+    // Build map of filename -> contents for every file touched in events
+    const filesMap = {};
+    const uniqueFiles = Array.from(new Set(
+        compactData.events.map(e => e[2]).filter(Boolean)
+    ));
+
+    for (const fpath of uniqueFiles) {
+        const base = path.basename(fpath);
+        let content = '';
+        try {
+            content = fs.readFileSync(fpath, 'utf8');
+        } catch {
+            try {
+                const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(fpath));
+                content = doc.getText();
+            } catch {
+                content = '';
+            }
+        }
+        filesMap[base] = content;
+    }
+
+    return {
+        code: currentAssignment.student_code,
+        assignment_id: currentAssignment.assignment_id,
+        base_time: compactData.base_time,
+        events: compactData.events,
+        files: filesMap
+    };
+}
+
+async function promptForCode(context) {
+    const codeInput = await vscode.window.showInputBox({
+        prompt: 'Enter your access code (sent via email)',
+        placeHolder: 'ABC123',
+        ignoreFocusOut: true,
+        validateInput: (text) => {
+            if (!text || text.trim().length === 0) return 'Access code is required';
+            return null;
+        }
+    });
+
+    if (!codeInput) return null;
+
+    const code = codeInput.trim().toUpperCase();
+    currentAssignment.student_code = code;
+
+    // Persist so user doesn't need to re-enter next time
+    const accepted = context.globalState.get('accepted_assignments', {});
+    accepted[currentAssignment.assignment_id] = accepted[currentAssignment.assignment_id] || {};
+    accepted[currentAssignment.assignment_id].code = code;
+    context.globalState.update('accepted_assignments', accepted);
+
+    return code;
+}
+
+// ---------------------------------------------------------------------------
+// Submit
+// ---------------------------------------------------------------------------
 
 async function submitAssignment(context) {
     if (!currentAssignment || !tracker) {
@@ -178,7 +243,6 @@ async function submitAssignment(context) {
         return;
     }
     
-    // Check deadline again before submission
     if (new Date() > new Date(currentAssignment.deadline)) {
         vscode.window.showErrorMessage(
             '⏰ Deadline has passed! Your work is saved locally but cannot be submitted.'
@@ -201,127 +265,52 @@ async function submitAssignment(context) {
     }, async (progress) => {
         try {
             progress.report({ message: 'Collecting events...' });
-            const compactData = tracker.getEvents();  // Get compact format
-            
-            if (compactData.events.length === 0) {
-                vscode.window.showWarningMessage('No coding activity detected. Write some code first!');
-                return;
-            }
-            
-            progress.report({ message: 'Collecting files...' });
+            const payload = await collectPayload();
+            if (!payload) return;
 
-            // Build map of filename -> contents for files touched in events
-            const filesMap = {};
-            const uniqueFiles = Array.from(new Set(
-                compactData.events.map(e => e[2]).filter(Boolean)  // e[2] is filename
-            ));
-
-            for (const fpath of uniqueFiles) {
-                const base = path.basename(fpath);
-                let content = '';
-                try {
-                    // Try reading from disk first
-                    content = fs.readFileSync(fpath, 'utf8');
-                } catch (err) {
-                    try {
-                        // Fallback to opening via VS Code API
-                        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(fpath));
-                        content = doc.getText();
-                    } catch (err2) {
-                        content = '';
-                    }
+            // Ask for code if we don't have one yet
+            if (!payload.code) {
+                progress.report({ message: 'Waiting for access code...' });
+                const code = await promptForCode(context);
+                if (!code) {
+                    vscode.window.showWarningMessage('Submission cancelled: access code required');
+                    return;
                 }
-                filesMap[base] = content;
+                payload.code = code;
             }
 
             progress.report({ message: 'Uploading...' });
 
-            // Ensure we have a student access code. If missing, ask now.
-            if (!currentAssignment.student_code) {
-                const codeInput = await vscode.window.showInputBox({
-                    prompt: 'Enter your access code (sent via email)',
-                    placeHolder: 'ABC123',
-                    ignoreFocusOut: true,
-                    validateInput: (text) => {
-                        if (!text || text.trim().length === 0) return 'Access code is required';
-                        return null;
-                    }
-                });
-
-                if (!codeInput) {
-                    vscode.window.showWarningMessage('Submission cancelled: access code required');
-                    return;
-                }
-
-                currentAssignment.student_code = codeInput.trim().toUpperCase();
-                // persist the code so user doesn't need to re-enter frequently
-                const accepted = context.globalState.get('accepted_assignments', {});
-                accepted[currentAssignment.assignment_id] = accepted[currentAssignment.assignment_id] || {};
-                accepted[currentAssignment.assignment_id].code = currentAssignment.student_code;
-                context.globalState.update('accepted_assignments', accepted);
-            }
-
-            const payload = JSON.stringify({
-                code: currentAssignment.student_code,
-                assignment_id: currentAssignment.assignment_id,
-                base_time: compactData.base_time,
-                events: compactData.events,
-                files: filesMap
-            });
-
-            // attempt submission; on failure offer to re-enter code then retry
             try {
-                await makeRequest(currentAssignment.server + '/api/submit', payload);
+                await makeRequest(currentAssignment.server + '/api/submit', JSON.stringify(payload));
             } catch (err) {
-                // Ask user if they'd like to enter a different code (likely invalid)
+                // First attempt failed — offer to re-enter code or retry
                 const choice = await vscode.window.showErrorMessage(
                     `Submission failed: ${err.message}`,
                     'Enter Code', 'Retry', 'Cancel'
                 );
 
                 if (choice === 'Enter Code') {
-                    const newCode = await vscode.window.showInputBox({
-                        prompt: 'Enter your access code (sent via email)',
-                        placeHolder: 'ABC123',
-                        ignoreFocusOut: true,
-                        validateInput: (text) => {
-                            if (!text || text.trim().length === 0) return 'Access code is required';
-                            return null;
-                        }
-                    });
-                    if (newCode) {
-                        currentAssignment.student_code = newCode.trim().toUpperCase();
-                        const accepted = context.globalState.get('accepted_assignments', {});
-                        accepted[currentAssignment.assignment_id] = accepted[currentAssignment.assignment_id] || {};
-                        accepted[currentAssignment.assignment_id].code = currentAssignment.student_code;
-                        context.globalState.update('accepted_assignments', accepted);
-                        // retry once
-                        await makeRequest(currentAssignment.server + '/api/submit', JSON.stringify({
-                            code: currentAssignment.student_code,
-                            assignment_id: currentAssignment.assignment_id,
-                            base_time: compactData.base_time,
-                            events: compactData.events,
-                            files: filesMap
-                        }));
-                        vscode.window.showInformationMessage('✅ Assignment submitted successfully after code update!');
-                    } else {
+                    const code = await promptForCode(context);
+                    if (!code) {
                         vscode.window.showWarningMessage('Submission cancelled');
+                        return;
                     }
-                } else if (choice === 'Retry') {
-                    await makeRequest(currentAssignment.server + '/api/submit', payload);
-                    vscode.window.showInformationMessage('✅ Assignment submitted successfully!');
-                } else {
+                    payload.code = code;
+                } else if (choice !== 'Retry') {
+                    // Cancel
                     vscode.window.showWarningMessage('Submission cancelled');
+                    return;
                 }
+                // Both "Enter Code" (with new code) and "Retry" fall through to the second attempt
+                await makeRequest(currentAssignment.server + '/api/submit', JSON.stringify(payload));
             }
-            
-            vscode.window.showInformationMessage(
-                '✅ Assignment submitted successfully!',
-                'OK'
-            );
-            
-            // Keep monitoring active so users can resubmit until deadline
-            
+
+            // Success — clear tracker so next submit only sends new events
+            tracker.clear();
+
+            vscode.window.showInformationMessage('✅ Assignment submitted successfully!');
+
         } catch (error) {
             vscode.window.showErrorMessage(
                 `Submission failed: ${error.message}`,

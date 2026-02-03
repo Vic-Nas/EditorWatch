@@ -1,8 +1,18 @@
 import os
 import csv
 from io import StringIO
-from flask import Flask, request, jsonify, render_template, redirect, url_for, session, Response, send_from_directory
-from models import db, Submission, Assignment, StudentCode, AnalysisResult, init_db, Admin
+from flask import (
+    Flask, request, jsonify, 
+    render_template, redirect, 
+    url_for, session, Response, 
+    send_from_directory
+)
+from models import (
+    db, Submission, 
+    Assignment, StudentCode, 
+    AnalysisResult, init_db, 
+    Admin
+)
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import func
 from cryptography.fernet import Fernet
@@ -86,12 +96,12 @@ def _require_assignment_owner(assignment_id):
     """
     Fetch assignment by ID and verify the current session owns it.
     Returns the Assignment on success.
-    Raises 404 if not found, returns a JSON 403 response if not owner.
+    Raises 404 if not found, returns None if not owner (caller must return 403).
     """
     assignment = Assignment.query.filter_by(assignment_id=assignment_id).first_or_404()
     current_admin = _ensure_current_admin()
     if not current_admin or assignment.owner_id != current_admin.id:
-        return None  # caller must return 403
+        return None
     return assignment
 
 
@@ -112,6 +122,37 @@ def generate_codes_csv(students_with_codes):
             student['code']
         ])
     return output.getvalue()
+
+
+def _merge_events(existing_encrypted, incoming_base_time, incoming_events):
+    """
+    Merge incoming events onto an existing encrypted timeline.
+    Returns the new encrypted payload.
+
+    Rebasing: all deltas in the stored timeline are relative to the original base_time.
+    To place an incoming event on that same axis:
+        new_delta = incoming_event_delta + (incoming_base_time - stored_base_time)
+    This preserves real wall-clock gaps between sessions automatically.
+    """
+    if existing_encrypted:
+        try:
+            existing = decrypt_data(existing_encrypted)
+        except Exception:
+            existing = None
+    else:
+        existing = None
+
+    # Nothing stored yet — just store incoming as-is
+    if not existing or not existing.get('events'):
+        return encrypt_data({'base_time': incoming_base_time, 'events': incoming_events})
+
+    stored_base = existing['base_time']
+    offset = incoming_base_time - stored_base  # ms offset to add to each incoming delta
+
+    for e in incoming_events:
+        existing['events'].append([e[0] + offset, e[1], e[2], e[3]])
+
+    return encrypt_data(existing)
 
 
 # ---------------------------------------------------------------------------
@@ -189,26 +230,12 @@ def logout():
 
 
 # ---------------------------------------------------------------------------
-# DB init
-# ---------------------------------------------------------------------------
-
-@app.route('/init-db')
-def initialize_database():
-    try:
-        db.create_all()
-        return jsonify({'success': True, 'message': 'Database tables created successfully'})
-    except Exception as e:
-        logger.error(f"Database initialization error: {e}")
-        return jsonify({'error': str(e)}), 500
-
-
-# ---------------------------------------------------------------------------
 # Submissions (extension-facing)
 # ---------------------------------------------------------------------------
 
 @app.route('/api/submit', methods=['POST'])
 def submit_assignment():
-    """Accept submission from VS Code extension."""
+    """Accept submission from VS Code extension. Merges events onto existing timeline."""
     try:
         data = request.json
 
@@ -231,8 +258,8 @@ def submit_assignment():
         if datetime.utcnow() > assignment.deadline:
             return jsonify({'error': 'Deadline has passed'}), 403
 
-        # Encrypt events (compact format from extension)
-        events_encrypted = encrypt_data({'base_time': data.get('base_time', 0), 'events': data['events']})
+        incoming_base = data.get('base_time', 0)
+        incoming_events = data['events']
 
         # Update or create submission
         submission = Submission.query.filter_by(
@@ -241,16 +268,19 @@ def submit_assignment():
         ).first()
 
         if submission:
-            logger.info(f"Updating submission for {student_code.email}")
-            submission.events_encrypted = events_encrypted
+            logger.info(f"Merging events for {student_code.email}")
+            submission.events_encrypted = _merge_events(
+                submission.events_encrypted, incoming_base, incoming_events
+            )
             submission.submitted_at = datetime.utcnow()
+            # Invalidate previous analysis — will be re-run on merged data
             AnalysisResult.query.filter_by(submission_id=submission.id).delete()
         else:
             logger.info(f"New submission from {student_code.email}")
             submission = Submission(
                 email=student_code.email,
                 assignment_id=data['assignment_id'],
-                events_encrypted=events_encrypted
+                events_encrypted=encrypt_data({'base_time': incoming_base, 'events': incoming_events})
             )
             db.session.add(submission)
 
@@ -567,7 +597,6 @@ def view_submission_detail(submission_id):
     submission = Submission.query.get_or_404(submission_id)
     analysis = AnalysisResult.query.filter_by(submission_id=submission_id).first()
 
-    # Use get_events_from_submission — returns compact format that event_parser expects
     events = get_events_from_submission(submission)
 
     student_code = StudentCode.query.filter_by(
