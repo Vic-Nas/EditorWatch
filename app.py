@@ -609,7 +609,14 @@ def export_submission_data(submission_id):
         'student_email': submission.email,
         'assignment_id': submission.assignment_id,
         'submitted_at': submission.submitted_at.isoformat(),
-        'events': events,
+        '_format': {
+            'description': 'Events use compact format: [delta_ms, type, filename, char_count]',
+            'types': 'i=insert, d=delete, s=save',
+            'timing': 'absolute_timestamp = base_time + delta_ms',
+            'example': '[367, "i", "main.py", 25] means: insert 25 chars at base_time+367ms in main.py'
+        },
+        'base_time': events.get('base_time', 0),
+        'events': events.get('events', []),
         'analysis': {
             'overall_score': analysis.overall_score,
             'incremental_score': analysis.incremental_score,
