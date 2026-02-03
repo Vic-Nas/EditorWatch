@@ -5,25 +5,44 @@ Simplified LLM export - lightweight structured data only
 import json
 
 
-def export_for_llm_analysis(submission, analysis, events, file_risks):
+def export_for_llm_analysis(submission, analysis, event_data, file_risks):
     """
     Export minimal, structured data for LLM analysis.
     ~50 lines of JSON instead of 500+
     
     Returns: dict with lightweight structured data
     """
+    # Handle both compact and legacy formats
+    if isinstance(event_data, dict):
+        events = event_data.get('events', [])
+        base_time = event_data.get('base_time', 0)
+        is_compact = events and isinstance(events[0], list)
+    else:
+        events = event_data
+        base_time = 0
+        is_compact = False
     
     # Calculate basic stats
-    inserts = [e for e in events if e['type'] == 'insert']
-    deletes = [e for e in events if e['type'] == 'delete']
-    
-    total_chars_added = sum(e['char_count'] for e in inserts)
-    total_chars_deleted = sum(e['char_count'] for e in deletes)
-    
-    if events:
-        duration_minutes = (events[-1]['timestamp'] - events[0]['timestamp']) / 1000 / 60
+    if is_compact:
+        inserts = [e for e in events if e[1] == 'i']
+        deletes = [e for e in events if e[1] == 'd']
+        total_chars_added = sum(e[3] for e in inserts)
+        total_chars_deleted = sum(e[3] for e in deletes)
+        
+        if events:
+            duration_minutes = (events[-1][0]) / 1000 / 60  # Last delta in minutes
+        else:
+            duration_minutes = 0
     else:
-        duration_minutes = 0
+        inserts = [e for e in events if e.get('type') == 'insert']
+        deletes = [e for e in events if e.get('type') == 'delete']
+        total_chars_added = sum(e.get('char_count', 0) for e in inserts)
+        total_chars_deleted = sum(e.get('char_count', 0) for e in deletes)
+        
+        if events:
+            duration_minutes = (events[-1].get('timestamp', 0) - events[0].get('timestamp', 0)) / 1000 / 60
+        else:
+            duration_minutes = 0
     
     # Parse flags
     flags = json.loads(analysis.flags) if analysis.flags else []
@@ -42,7 +61,7 @@ def export_for_llm_analysis(submission, analysis, events, file_risks):
         },
         
         "scores": {
-            "overall": analysis.incremental_score,  # Will be overall_score after update
+            "overall": analysis.overall_score,
             "incremental": analysis.incremental_score,
             "typing": analysis.typing_variance,
             "corrections": analysis.error_correction_ratio,
@@ -62,14 +81,14 @@ def export_for_llm_analysis(submission, analysis, events, file_risks):
     }
 
 
-def generate_llm_prompt(submission, analysis, events, file_risks):
+def generate_llm_prompt(submission, analysis, event_data, file_risks):
     """
     Generate minimal prompt for LLM analysis.
     ~20 lines instead of 100+
     
     Returns: string prompt
     """
-    data = export_for_llm_analysis(submission, analysis, events, file_risks)
+    data = export_for_llm_analysis(submission, analysis, event_data, file_risks)
     
     # Determine verdict
     overall = data['scores']['overall']
@@ -116,9 +135,21 @@ Top Issues:
     return prompt
 
 
-def export_to_json(submission, analysis, events, file_risks, filepath):
-    """Export data to JSON file"""
-    data = export_for_llm_analysis(submission, analysis, events, file_risks)
+def export_to_json(submission, analysis, event_data, file_risks, filepath):
+    """Export data to JSON file with format documentation"""
+    data = export_for_llm_analysis(submission, analysis, event_data, file_risks)
+    
+    # Add format explanation for compact events
+    if isinstance(event_data, dict) and 'base_time' in event_data:
+        data['_format'] = {
+            'description': 'Events use compact format for efficiency',
+            'structure': '[delta_ms, type, filename, char_count]',
+            'types': 'i=insert, d=delete, s=save',
+            'timing': 'absolute_timestamp = base_time + delta_ms',
+            'example': '[367, "i", "main.py", 25] means: insert 25 chars at base_time+367ms in main.py'
+        }
+        data['base_time'] = event_data.get('base_time', 0)
+        data['events'] = event_data.get('events', [])
     
     with open(filepath, 'w') as f:
         json.dump(data, f, indent=2)

@@ -5,7 +5,50 @@ from datetime import datetime
 from .messages import render as render_message
 
 
-def incremental_score(events):
+def _normalize_events(event_data):
+    """
+    Helper to extract events array and metadata from either compact or legacy format.
+    Returns: (events_list, base_time, is_compact)
+    """
+    if isinstance(event_data, dict):
+        events = event_data.get('events', [])
+        base_time = event_data.get('base_time', 0)
+        is_legacy = event_data.get('_legacy', False)
+        
+        if events and isinstance(events[0], list):
+            # Compact format
+            return events, base_time, True
+        else:
+            # Legacy dict format stored in new structure
+            return events, base_time, False
+    else:
+        # Direct list (legacy)
+        return event_data, 0, False
+
+
+def _get_timestamp(event, base_time, is_compact):
+    """Get absolute timestamp from event"""
+    if is_compact:
+        return base_time + event[0]  # delta + base
+    return event.get('timestamp', 0)
+
+
+def _get_type(event, is_compact):
+    """Get event type"""
+    if is_compact:
+        type_map = {'i': 'insert', 'd': 'delete', 's': 'save'}
+        return type_map.get(event[1], 'insert')
+    return event.get('type', 'insert')
+
+
+def _get_char_count(event, is_compact):
+    """Get character count"""
+    if is_compact:
+        return event[3] if len(event) > 3 else 0
+    return event.get('char_count', 0)
+
+
+def incremental_score(event_data):
     """
     Calculate incremental development score (0-10 scale).
     0-3 = SUSPICIOUS (sudden large insertions)
@@ -14,33 +57,30 @@ def incremental_score(events):
     
     Returns: 0.0 to 10.0
     """
+    events, base_time, is_compact = _normalize_events(event_data)
+    
     if not events:
         return 0.0
     
-    insert_events = [e for e in events if e['type'] == 'insert']
-    if not insert_events or len(insert_events) == 0:
+    insert_events = [e for e in events if _get_type(e, is_compact) == 'insert']
+    if not insert_events:
         return 0.0
     
-    # Calculate PERCENTAGE OF CHARACTERS from large pastes (not event count!)
-    total_chars = sum(e['char_count'] for e in insert_events)
+    # Calculate PERCENTAGE OF CHARACTERS from large pastes
+    total_chars = sum(_get_char_count(e, is_compact) for e in insert_events)
     if total_chars == 0:
         return 0.0
     
-    large_paste_chars = sum(e['char_count'] for e in insert_events if e['char_count'] > 100)
+    large_paste_chars = sum(_get_char_count(e, is_compact) for e in insert_events 
+                           if _get_char_count(e, is_compact) > 100)
     
-    # Calculate what % of CHARACTERS are from large pastes
     large_ratio = large_paste_chars / total_chars
-    
-    # MORE pasted characters = LOWER score
-    # 0% pasted = 10/10
-    # 50% pasted = 5/10
-    # 100% pasted = 0/10
     score = (1.0 - large_ratio) * 10
     
     return round(score, 1)
 
 
-def typing_variance(events):
+def typing_variance(event_data):
     """
     Calculate variance in typing speed (0-10 scale).
     0-3 = SUSPICIOUS (robotic/pasted, too consistent)
@@ -49,24 +89,27 @@ def typing_variance(events):
     
     Returns: 0.0 to 10.0
     """
+    events, base_time, is_compact = _normalize_events(event_data)
+    
     if len(events) < 2:
         return 0.0
     
-    insert_events = [e for e in events if e['type'] == 'insert' and e['char_count'] > 0]
+    insert_events = [e for e in events if _get_type(e, is_compact) == 'insert' 
+                    and _get_char_count(e, is_compact) > 0]
     if len(insert_events) < 2:
         return 0.0
     
     # Calculate time intervals between insertions
     intervals = []
     for i in range(1, len(insert_events)):
-        time_diff = insert_events[i]['timestamp'] - insert_events[i-1]['timestamp']
+        time_diff = (_get_timestamp(insert_events[i], base_time, is_compact) - 
+                    _get_timestamp(insert_events[i-1], base_time, is_compact))
         if time_diff > 0:
             intervals.append(time_diff)
     
     if not intervals or len(intervals) < 2:
         return 0.0
     
-    # Calculate coefficient of variation (normalized variance)
     variance = np.var(intervals)
     mean = np.mean(intervals)
     
@@ -74,16 +117,11 @@ def typing_variance(events):
         return 0.0
     
     cv = np.sqrt(variance) / mean
-    
-    # Normalize to 0-10 range
-    # Low CV (consistent) = low score = bad
-    # High CV (varied) = high score = good
-    # Typical human CV is 0.5-2.0, so normalize around that
     raw_score = min(cv / 2.0, 1.0)
     return round(raw_score * 10, 1)
 
 
-def error_correction_ratio(events):
+def error_correction_ratio(event_data):
     """
     Calculate ratio of deletions to insertions (0-10 scale).
     0-3 = SUSPICIOUS (no mistakes, code perfect first time)
@@ -92,32 +130,31 @@ def error_correction_ratio(events):
     
     Returns: 0.0 to 10.0
     """
+    events, base_time, is_compact = _normalize_events(event_data)
+    
     if not events:
         return 0.0
     
-    insert_count = sum(1 for e in events if e['type'] == 'insert')
-    delete_count = sum(1 for e in events if e['type'] == 'delete')
+    insert_count = sum(1 for e in events if _get_type(e, is_compact) == 'insert')
+    delete_count = sum(1 for e in events if _get_type(e, is_compact) == 'delete')
     
     if insert_count == 0:
         return 0.0
     
     ratio = delete_count / insert_count
-    
-    # Normalize (typical ratio is 0.15-0.30 for humans)
-    # 0 deletions = 0/10 (suspicious)
-    # 0.15 ratio = 5/10 (borderline)
-    # 0.30+ ratio = 10/10 (good)
     raw_score = min(ratio / 0.3, 1.0)
     return round(raw_score * 10, 1)
 
 
-def paste_burst_detection(events):
+def paste_burst_detection(event_data):
     """
     Detect rapid large insertions (paste bursts).
     Returns count - higher = worse (more suspicious)
     
     Returns: integer count
     """
+    events, base_time, is_compact = _normalize_events(event_data)
+    
     if not events:
         return 0
     
@@ -125,16 +162,16 @@ def paste_burst_detection(events):
     last_time = 0
     
     for e in events:
-        if e['type'] == 'insert' and e['char_count'] > 100:
-            # If less than 2 seconds since last large insert
-            if e['timestamp'] - last_time < 2000:
+        if _get_type(e, is_compact) == 'insert' and _get_char_count(e, is_compact) > 100:
+            timestamp = _get_timestamp(e, base_time, is_compact)
+            if timestamp - last_time < 2000:
                 bursts += 1
-            last_time = e['timestamp']
+            last_time = timestamp
     
     return bursts
 
 
-def code_velocity_analysis(events):
+def code_velocity_analysis(event_data):
     """
     Analyze typing speed - creates a 0-10 score where:
     0-3 = SUSPICIOUS (>200 chars/min sustained = pasting)
@@ -143,17 +180,19 @@ def code_velocity_analysis(events):
     
     Returns: dict with velocity metrics and score
     """
+    events, base_time, is_compact = _normalize_events(event_data)
+    
     if len(events) < 2:
         return {'average_cpm': 0, 'max_cpm': 0, 'score': 0, 'suspicious_bursts': []}
     
-    insert_events = [e for e in events if e['type'] == 'insert']
+    insert_events = [e for e in events if _get_type(e, is_compact) == 'insert']
     if not insert_events:
         return {'average_cpm': 0, 'max_cpm': 0, 'score': 0, 'suspicious_bursts': []}
     
     # Calculate chars per minute for 30-second windows
     window_size = 30 * 1000  # 30 seconds
-    start_time = events[0]['timestamp']
-    end_time = events[-1]['timestamp']
+    start_time = _get_timestamp(events[0], base_time, is_compact)
+    end_time = _get_timestamp(events[-1], base_time, is_compact)
     
     velocities = []
     suspicious_bursts = []
@@ -162,14 +201,13 @@ def code_velocity_analysis(events):
     while current_time < end_time:
         window_end = current_time + window_size
         window_events = [e for e in insert_events 
-                        if current_time <= e['timestamp'] < window_end]
+                        if current_time <= _get_timestamp(e, base_time, is_compact) < window_end]
         
         if window_events:
-            chars = sum(e['char_count'] for e in window_events)
+            chars = sum(_get_char_count(e, is_compact) for e in window_events)
             cpm = chars * 2  # Convert 30-sec to per-minute
             velocities.append(cpm)
             
-            # Flag if sustained > 200 chars/min
             if cpm > 200:
                 suspicious_bursts.append({
                     'time_offset': (current_time - start_time) / 1000 / 60,
@@ -182,20 +220,13 @@ def code_velocity_analysis(events):
     avg_cpm = round(sum(velocities) / len(velocities), 1) if velocities else 0
     max_cpm = round(max(velocities), 1) if velocities else 0
     
-    # Calculate score based on average speed
-    # 40-80 cpm = 10/10 (perfect human range)
-    # 100-150 cpm = 5/10 (fast but possible)
-    # 200+ cpm = 0/10 (pasting)
     if avg_cpm <= 80:
         score = 10.0
     elif avg_cpm <= 150:
-        # Linear scale from 80->150 maps to 10->5
         score = 10.0 - ((avg_cpm - 80) / 70) * 5
     elif avg_cpm <= 200:
-        # Linear scale from 150->200 maps to 5->1
         score = 5.0 - ((avg_cpm - 150) / 50) * 4
     else:
-        # >200 = 0
         score = 0.0
     
     return {
@@ -206,7 +237,7 @@ def code_velocity_analysis(events):
     }
 
 
-def session_consistency_score(events):
+def session_consistency_score(event_data):
     """
     Analyze work sessions (0-10 scale).
     0-3 = SUSPICIOUS (1-2 sessions, AI-generated pattern)
@@ -215,33 +246,30 @@ def session_consistency_score(events):
     
     Returns: 0.0 to 10.0
     """
+    events, base_time, is_compact = _normalize_events(event_data)
+    
     if not events:
         return 0.0
     
     # Group events into sessions (5+ min gap = new session)
     sessions = []
     current_session = []
-    last_time = events[0]['timestamp']
+    last_time = _get_timestamp(events[0], base_time, is_compact)
     
     for event in events:
-        gap = (event['timestamp'] - last_time) / 1000 / 60
+        timestamp = _get_timestamp(event, base_time, is_compact)
+        gap = (timestamp - last_time) / 1000 / 60
         if gap > 5 and current_session:
             sessions.append(current_session)
             current_session = []
         current_session.append(event)
-        last_time = event['timestamp']
+        last_time = timestamp
     
     if current_session:
         sessions.append(current_session)
     
     num_sessions = len(sessions)
     
-    # Simple scoring based on session count
-    # 1 session = 0/10
-    # 2 sessions = 3/10
-    # 3 sessions = 6/10
-    # 4 sessions = 8/10
-    # 5+ sessions = 10/10
     if num_sessions == 1:
         score = 0.0
     elif num_sessions == 2:
@@ -256,16 +284,22 @@ def session_consistency_score(events):
     return score
 
 
-def file_level_analysis(events):
+def file_level_analysis(event_data):
     """
     Analyze patterns per file to identify which files might be problematic.
     
     Returns: dict mapping filename to risk assessment
     """
+    events, base_time, is_compact = _normalize_events(event_data)
     files = {}
     
     for event in events:
-        filename = event.get('file', 'unknown').split('/')[-1]
+        # Get filename
+        if is_compact:
+            filename = event[2] if len(event) > 2 else 'unknown'
+        else:
+            filename = event.get('file', 'unknown').split('/')[-1]
+        
         if filename not in files:
             files[filename] = {
                 'inserts': [],
@@ -274,12 +308,14 @@ def file_level_analysis(events):
                 'total_chars': 0
             }
         
-        if event['type'] == 'insert':
+        event_type = _get_type(event, is_compact)
+        
+        if event_type == 'insert':
             files[filename]['inserts'].append(event)
-            files[filename]['total_chars'] += event['char_count']
-        elif event['type'] == 'delete':
+            files[filename]['total_chars'] += _get_char_count(event, is_compact)
+        elif event_type == 'delete':
             files[filename]['deletes'].append(event)
-        elif event['type'] == 'save':
+        elif event_type == 'save':
             files[filename]['saves'] += 1
     
     # Analyze each file
@@ -289,14 +325,10 @@ def file_level_analysis(events):
         if not inserts:
             continue
         
-        # Check for large paste bursts in this file
-        large_pastes = [e for e in inserts if e['char_count'] > 100]
+        large_pastes = [e for e in inserts if _get_char_count(e, is_compact) > 100]
         paste_ratio = len(large_pastes) / len(inserts) if inserts else 0
-        
-        # Check edit/delete ratio
         edit_ratio = len(data['deletes']) / len(inserts) if inserts else 0
         
-        # Determine risk level
         risk = 'low'
         issues = []
         
@@ -314,9 +346,9 @@ def file_level_analysis(events):
                 risk = 'medium'
             issues.append(f'very few edits ({edit_ratio*100:.1f}%)')
         
-        # Check if file appeared suddenly (all code in < 2 minutes)
         if len(inserts) > 0:
-            duration = (inserts[-1]['timestamp'] - inserts[0]['timestamp']) / 1000 / 60
+            duration = (_get_timestamp(inserts[-1], base_time, is_compact) - 
+                       _get_timestamp(inserts[0], base_time, is_compact)) / 1000 / 60
             if duration < 2 and data['total_chars'] > 200:
                 risk = 'high'
                 issues.append(f'entire file in {duration:.1f} minutes')
@@ -334,7 +366,7 @@ def file_level_analysis(events):
     return file_risks
 
 
-def generate_detailed_flags(metrics, events, work_patterns):
+def generate_detailed_flags(metrics, event_data, work_patterns):
     """
     Generate top 3 most important flags only.
     
@@ -380,14 +412,14 @@ def generate_detailed_flags(metrics, events, work_patterns):
     # File-specific critical issues (priority 9)
     high_risk_files = [f for f, data in file_risks.items() if data['risk'] == 'high']
     if high_risk_files:
-        for f in high_risk_files[:1]:  # Only first file
-                issues = '; '.join(file_risks[f].get('issues', []))
-                potential_flags.append({
-                    'priority': 9,
-                    'severity': 'high',
-                    'category': 'File Analysis',
-                    'message': render_message('file_risks', file=f, issues=issues)
-                })
+        for f in high_risk_files[:1]:
+            issues = '; '.join(file_risks[f].get('issues', []))
+            potential_flags.append({
+                'priority': 9,
+                'severity': 'high',
+                'category': 'File Analysis',
+                'message': render_message('file_risks', file=f, issues=issues)
+            })
     
     # WARNING FLAGS (priority 5)
     if metrics['incremental_score'] < 4.0:
@@ -395,7 +427,7 @@ def generate_detailed_flags(metrics, events, work_patterns):
             'priority': 5,
             'severity': 'medium',
             'category': 'Development Pattern',
-                'message': render_message('chunks_appeared', incremental_score=metrics['incremental_score'])
+            'message': render_message('chunks_appeared', incremental_score=metrics['incremental_score'])
         })
     
     if metrics['typing_variance'] < 3.0:
@@ -403,7 +435,7 @@ def generate_detailed_flags(metrics, events, work_patterns):
             'priority': 5,
             'severity': 'medium',
             'category': 'Typing Behavior',
-                'message': render_message('robotic_typing', typing_variance=metrics['typing_variance'])
+            'message': render_message('robotic_typing', typing_variance=metrics['typing_variance'])
         })
     
     if metrics['error_correction_ratio'] < 2.0 and total_chars > 200:
@@ -411,7 +443,7 @@ def generate_detailed_flags(metrics, events, work_patterns):
             'priority': 5,
             'severity': 'medium',
             'category': 'Error Correction',
-                'message': render_message('few_corrections', error_correction_ratio=metrics['error_correction_ratio'])
+            'message': render_message('few_corrections', error_correction_ratio=metrics['error_correction_ratio'])
         })
     
     if metrics.get('session_consistency', 0) < 4.0:
@@ -419,7 +451,7 @@ def generate_detailed_flags(metrics, events, work_patterns):
             'priority': 5,
             'severity': 'medium',
             'category': 'Work Sessions',
-                'message': render_message('few_sessions', session_consistency=metrics.get('session_consistency', 0))
+            'message': render_message('few_sessions', session_consistency=metrics.get('session_consistency', 0))
         })
     
     # Sort by priority and take top 3
@@ -430,13 +462,12 @@ def generate_detailed_flags(metrics, events, work_patterns):
     for flag in flags:
         flag.pop('priority', None)
     
-    # If no flags, add positive indicator
-        if not flags:
-            flags.append({
-                'severity': 'none',
-                'category': 'Assessment',
-                'message': render_message('no_suspicious')
-            })
+    if not flags:
+        flags.append({
+            'severity': 'none',
+            'category': 'Assessment',
+            'message': render_message('no_suspicious')
+        })
     
     return flags
 
@@ -448,7 +479,6 @@ def calculate_overall_score(metrics):
     
     Returns: float 0.0-10.0
     """
-    # Start with weighted average
     score = (
         metrics['incremental_score'] * 0.25 +
         metrics['typing_variance'] * 0.20 +
@@ -458,63 +488,60 @@ def calculate_overall_score(metrics):
     )
     
     # HARD PENALTIES for obvious red flags
-    
-    # If ANY core metric is 0-2, cap overall score at 3
     if (metrics['incremental_score'] <= 2 or 
         metrics['typing_variance'] <= 2 or
         metrics['velocity'].get('score', 10) <= 2):
         score = min(score, 3.0)
     
-    # If velocity is insane (>500 chars/min), force score to 0-1 range
     if metrics['velocity'].get('average_cpm', 0) > 500:
         score = min(score, 1.0)
     
-    # Penalize for paste bursts
     if metrics['paste_burst_count'] > 5:
         score = score * 0.3
     elif metrics['paste_burst_count'] > 2:
         score = score * 0.6
     
-    # If sessions = 0 (one continuous session), penalize
     if metrics.get('session_consistency', 0) <= 1:
         score = score * 0.7
     
-    return round(max(score, 0.0), 1)  # Ensure never negative
+    return round(max(score, 0.0), 1)
 
 
-def analyze_work_patterns(events):
+def analyze_work_patterns(event_data):
     """
     Analyze detailed work patterns for human-readable insights.
     
     Returns: dict with detailed analysis
     """
+    events, base_time, is_compact = _normalize_events(event_data)
+    
     if not events:
         return {}
     
-    insert_events = [e for e in events if e['type'] == 'insert']
-    delete_events = [e for e in events if e['type'] == 'delete']
+    insert_events = [e for e in events if _get_type(e, is_compact) == 'insert']
+    delete_events = [e for e in events if _get_type(e, is_compact) == 'delete']
     
-    total_chars_inserted = sum(e['char_count'] for e in insert_events)
-    total_chars_deleted = sum(e['char_count'] for e in delete_events)
+    total_chars_inserted = sum(_get_char_count(e, is_compact) for e in insert_events)
+    total_chars_deleted = sum(_get_char_count(e, is_compact) for e in delete_events)
     
     # Time analysis
-    start_time = events[0]['timestamp']
-    end_time = events[-1]['timestamp']
+    start_time = _get_timestamp(events[0], base_time, is_compact)
+    end_time = _get_timestamp(events[-1], base_time, is_compact)
     total_duration_minutes = (end_time - start_time) / 1000 / 60
     
     # Break detection (gaps > 10 minutes)
     breaks = []
     for i in range(1, len(events)):
-        gap = (events[i]['timestamp'] - events[i-1]['timestamp']) / 1000 / 60
+        gap = (_get_timestamp(events[i], base_time, is_compact) - 
+               _get_timestamp(events[i-1], base_time, is_compact)) / 1000 / 60
         if gap > 10:
             breaks.append(gap)
     
-    # Active coding time (excluding breaks)
     active_time = total_duration_minutes - sum(breaks)
     
     # Paste analysis
-    large_pastes = [e for e in insert_events if e['char_count'] > 100]
-    large_paste_chars = sum(e['char_count'] for e in large_pastes)
+    large_pastes = [e for e in insert_events if _get_char_count(e, is_compact) > 100]
+    large_paste_chars = sum(_get_char_count(e, is_compact) for e in large_pastes)
     paste_percentage = (large_paste_chars / total_chars_inserted * 100) if total_chars_inserted > 0 else 0
     
     return {
@@ -528,30 +555,24 @@ def analyze_work_patterns(events):
     }
 
 
-def calculate_all_metrics(events):
+def calculate_all_metrics(event_data):
     """Calculate all metrics and generate comprehensive analysis"""
-    # Core metrics (0-10 scale)
-    velocity_data = code_velocity_analysis(events)
+    velocity_data = code_velocity_analysis(event_data)
     
     metrics = {
-        'incremental_score': incremental_score(events),
-        'typing_variance': typing_variance(events),
-        'error_correction_ratio': error_correction_ratio(events),
-        'paste_burst_count': paste_burst_detection(events),
-        'session_consistency': session_consistency_score(events),
+        'incremental_score': incremental_score(event_data),
+        'typing_variance': typing_variance(event_data),
+        'error_correction_ratio': error_correction_ratio(event_data),
+        'paste_burst_count': paste_burst_detection(event_data),
+        'session_consistency': session_consistency_score(event_data),
         'velocity': velocity_data,
         'velocity_score': velocity_data.get('score', 0),
-        'file_risks': file_level_analysis(events)
+        'file_risks': file_level_analysis(event_data)
     }
     
-    # Get detailed work pattern analysis
-    work_patterns = analyze_work_patterns(events)
-    
-    # Calculate overall score
+    work_patterns = analyze_work_patterns(event_data)
     metrics['overall_score'] = calculate_overall_score(metrics)
-    
-    # Generate top 3 flags only
-    flags = generate_detailed_flags(metrics, events, work_patterns)
+    flags = generate_detailed_flags(metrics, event_data, work_patterns)
     
     return {
         **metrics,
