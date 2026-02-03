@@ -70,10 +70,25 @@ class EventTracker {
     }
 
     /**
-     * Get all events
+     * Get all events in compact format
      */
     getEvents() {
-        return this.events;
+        if (this.events.length === 0) {
+            return { base_time: Date.now(), events: [] };
+        }
+
+        const baseTime = this.events[0].timestamp;
+        const path = require('path');
+        
+        return {
+            base_time: baseTime,
+            events: this.events.map(e => [
+                e.timestamp - baseTime,                    // Delta timestamp (ms)
+                e.type === 'insert' ? 'i' : e.type === 'delete' ? 'd' : 's',  // Type code
+                path.basename(e.file),                     // Just filename
+                e.char_count                               // Character count
+            ])
+        };
     }
 
     /**

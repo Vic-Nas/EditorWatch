@@ -201,9 +201,9 @@ async function submitAssignment(context) {
     }, async (progress) => {
         try {
             progress.report({ message: 'Collecting events...' });
-            const events = tracker.getEvents();  // ← GET FROM TRACKER
+            const compactData = tracker.getEvents();  // Get compact format
             
-            if (events.length === 0) {
+            if (compactData.events.length === 0) {
                 vscode.window.showWarningMessage('No coding activity detected. Write some code first!');
                 return;
             }
@@ -212,7 +212,9 @@ async function submitAssignment(context) {
 
             // Build map of filename -> contents for files touched in events
             const filesMap = {};
-            const uniqueFiles = Array.from(new Set(events.map(e => e.file).filter(Boolean)));
+            const uniqueFiles = Array.from(new Set(
+                compactData.events.map(e => e[2]).filter(Boolean)  // e[2] is filename
+            ));
 
             for (const fpath of uniqueFiles) {
                 const base = path.basename(fpath);
@@ -262,7 +264,8 @@ async function submitAssignment(context) {
             const payload = JSON.stringify({
                 code: currentAssignment.student_code,
                 assignment_id: currentAssignment.assignment_id,
-                events: events,
+                base_time: compactData.base_time,
+                events: compactData.events,
                 files: filesMap
             });
 
@@ -296,7 +299,8 @@ async function submitAssignment(context) {
                         await makeRequest(currentAssignment.server + '/api/submit', JSON.stringify({
                             code: currentAssignment.student_code,
                             assignment_id: currentAssignment.assignment_id,
-                            events: events,
+                            base_time: compactData.base_time,
+                            events: compactData.events,
                             files: filesMap
                         }));
                         vscode.window.showInformationMessage('✅ Assignment submitted successfully after code update!');
