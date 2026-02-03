@@ -27,20 +27,15 @@ def decrypt_data(encrypted):
 
 def get_events_from_submission(submission):
     """
-    Safely return event data from a Submission object (may be encrypted or empty).
-    Returns compact format: { base_time: ..., events: [[delta, type, file, count], ...] }
+    Decrypt and return event data from a Submission.
+    Always returns compact format: { base_time: int, events: [[delta_ms, type, file, char_count], ...] }
     """
     if not submission or not getattr(submission, 'events_encrypted', None):
         return {'base_time': 0, 'events': []}
     try:
         data = decrypt_data(submission.events_encrypted)
-        # Handle both old and new formats
         if isinstance(data, dict) and 'base_time' in data:
-            return data  # New compact format
-        elif isinstance(data, list):
-            # Old format - convert to compact-like structure for compatibility
-            # This allows gradual migration
-            return {'base_time': 0, 'events': data, '_legacy': True}
+            return data
         return {'base_time': 0, 'events': []}
     except Exception:
         return {'base_time': 0, 'events': []}
@@ -48,23 +43,11 @@ def get_events_from_submission(submission):
 
 def files_from_events(event_data):
     """
-    Return normalized set/list of basenames touched in events.
-    Works with both compact and legacy formats.
+    Return sorted list of unique basenames from compact event data.
+    Each event: [delta_ms, type, filename, char_count]
     """
-    events = event_data.get('events', []) if isinstance(event_data, dict) else event_data
-    
-    if not events:
-        return []
-    
-    # Check if compact format (arrays) or legacy format (dicts)
-    if events and isinstance(events[0], list):
-        # Compact format: e[2] is filename
-        files = {e[2] for e in events if len(e) >= 3 and e[2]}
-    else:
-        # Legacy format: e['file']
-        files = {(e.get('file') or '').split('/')[-1] for e in events if e.get('file')}
-    
-    return sorted(f for f in files if f)
+    events = event_data.get('events', [])
+    return sorted({e[2] for e in events if len(e) > 2 and e[2]})
 
 
 def compress_text_to_b64(text: str) -> str:
