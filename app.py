@@ -232,7 +232,7 @@ def submit_assignment():
             return jsonify({'error': 'Deadline has passed'}), 403
 
         # Encrypt events (compact format from extension)
-        events_encrypted = encrypt_data(data['events'])
+        events_encrypted = encrypt_data({'base_time': data.get('base_time', 0), 'events': data['events']})
 
         # Update or create submission
         submission = Submission.query.filter_by(
