@@ -2,7 +2,7 @@
   "name": "editorwatch",
   "displayName": "EditorWatch",
   "description": "Code process monitor for programming assignments - making cheating harder than learning",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "publisher": "vn-tf",
   "icon": "icon.png",
   "repository": {
